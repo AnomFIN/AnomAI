@@ -48,6 +48,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "show_background": True,
     "background_path": "",
     "background_subsample": 2,
+    "background_opacity": 0.18,
     # Typografia/kontrasti
     "font_size": 12,
 }
@@ -62,7 +63,9 @@ class JugiAIApp(tk.Tk):
         self.config_dict = self.load_config()
         self.history: List[Dict[str, str]] = []  # {role:"user"|"assistant", content:str}
         self._wm_img = None
-        self._wm_inserted = False
+        self._wm_raw_img = None
+        self._wm_scaled_img = None
+        self._wm_overlay: tk.Label | None = None
         self.llm = None
         self.llm_model_path = None
 
@@ -109,8 +112,21 @@ class JugiAIApp(tk.Tk):
         clear_btn.pack(side=tk.RIGHT, pady=6)
 
         # Chat area
-        self.chat = ScrolledText(root, wrap=tk.WORD, state=tk.DISABLED)
-        self.chat.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
+        chat_container = ttk.Frame(root)
+        chat_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
+
+        self.chat = tk.Text(
+            chat_container,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            yscrollcommand=self._on_chat_scroll,
+        )
+        self.chat.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._chat_scrollbar = ttk.Scrollbar(
+            chat_container, orient=tk.VERTICAL, command=self.chat.yview
+        )
+        self._chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Dark-ish theme for contrast
         try:
@@ -118,6 +134,7 @@ class JugiAIApp(tk.Tk):
         except Exception:
             fs = 12
         self.chat.configure(bg="#0b1220", fg="#e5e7eb", insertbackground="#e5e7eb", font=("Segoe UI", fs))
+        self.chat.bind("<Configure>", lambda event: self._position_watermark_overlay())
 
         # Tagit rooleille
         self.chat.tag_configure("role_user", foreground="#93c5fd")
@@ -146,6 +163,10 @@ class JugiAIApp(tk.Tk):
     def _enter_send(self, event):
         self.on_send()
         return "break"
+
+    def _on_chat_scroll(self, first: str, last: str) -> None:
+        self._chat_scrollbar.set(first, last)
+        self._position_watermark_overlay()
 
     # --- Config persistence ---
     def load_config(self) -> Dict[str, Any]:
@@ -367,7 +388,6 @@ class JugiAIApp(tk.Tk):
         self.chat.delete("1.0", tk.END)
         self.chat.configure(state=tk.DISABLED)
         self.save_history()
-        self._wm_inserted = False
         self._insert_watermark_if_needed()
 
     # --- Settings dialog ---
@@ -377,6 +397,11 @@ class JugiAIApp(tk.Tk):
         dlg.transient(self)
         dlg.grab_set()
         dlg.geometry("720x740")
+
+        original_show_background = bool(self.config_dict.get("show_background", True))
+        original_opacity = float(
+            self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"])
+        )
 
         outer = ttk.Frame(dlg, padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -474,8 +499,46 @@ class JugiAIApp(tk.Tk):
                 bg_var.set(p)
         ttk.Button(u, text="Valitse…", command=choose_bg).grid(row=row, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
-        show_bg_var = tk.BooleanVar(value=bool(self.config_dict.get("show_background", True)))
+        opacity_var = tk.DoubleVar(
+            value=float(
+                self.config_dict.get(
+                    "background_opacity", DEFAULT_CONFIG["background_opacity"]
+                )
+            )
+        )
+        show_bg_var = tk.BooleanVar(value=original_show_background)
         ttk.Checkbutton(u, text="Näytä taustakuva/watermark", variable=show_bg_var).grid(row=row, column=1, sticky=tk.W)
+        
+        def _on_show_bg_toggle(*_args: Any) -> None:
+            enabled = bool(show_bg_var.get())
+            if enabled:
+                self._load_watermark_image(respect_visibility=False)
+                self._preview_watermark_opacity(opacity_var.get(), respect_visibility=False)
+            else:
+                self._remove_watermark_overlay()
+
+        show_bg_var.trace_add("write", _on_show_bg_toggle)
+        row += 1
+        ttk.Label(u, text="Taustakuvan läpinäkyvyys (0–1):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        opacity_scale = ttk.Scale(u, from_=0.0, to=1.0, variable=opacity_var)
+        opacity_scale.grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        opacity_value_lbl = ttk.Label(u, text=f"{opacity_var.get():.2f}")
+        opacity_value_lbl.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
+
+        def _on_opacity_change(*_args: Any) -> None:
+            try:
+                value = float(opacity_var.get())
+            except Exception:
+                value = original_opacity
+            value = max(0.0, min(1.0, value))
+            opacity_value_lbl.configure(text=f"{value:.2f}")
+            if show_bg_var.get():
+                self._preview_watermark_opacity(value, respect_visibility=False)
+            else:
+                self._remove_watermark_overlay()
+
+        opacity_var.trace_add("write", _on_opacity_change)
+        _on_opacity_change()
         row += 1
         ttk.Label(u, text="Watermark-koko (1–8, suurempi = pienempi kuva):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         subs_var = tk.IntVar(value=int(self.config_dict.get("background_subsample", 2)))
@@ -492,7 +555,16 @@ class JugiAIApp(tk.Tk):
         # Footer buttons (use pack to avoid mixing with grid in same container)
         btns = ttk.Frame(outer)
         btns.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
-        ttk.Button(btns, text="Sulje tallentamatta", command=dlg.destroy).pack(side=tk.RIGHT)
+
+        def cancel_and_close() -> None:
+            self._load_watermark_image()
+            if original_show_background:
+                self._preview_watermark_opacity(original_opacity)
+            else:
+                self._remove_watermark_overlay()
+            dlg.destroy()
+
+        ttk.Button(btns, text="Sulje tallentamatta", command=cancel_and_close).pack(side=tk.RIGHT)
 
         def save_and_close():
             # tallenna arvot
@@ -517,13 +589,18 @@ class JugiAIApp(tk.Tk):
             except Exception:
                 self.config_dict["background_subsample"] = 2
             try:
+                opacity_val = float(opacity_var.get())
+            except Exception:
+                opacity_val = DEFAULT_CONFIG["background_opacity"]
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            self.config_dict["background_opacity"] = float(f"{opacity_val:.3f}")
+            try:
                 self.config_dict["font_size"] = max(9, min(20, int(fsize_var.get())))
             except Exception:
                 self.config_dict["font_size"] = 12
             self.save_config()
             self._apply_icon_from_config()
             self._load_watermark_image()
-            self._wm_inserted = False
             self._insert_watermark_if_needed()
             # Apply font size live
             fs = int(self.config_dict.get("font_size", 12))
@@ -532,6 +609,8 @@ class JugiAIApp(tk.Tk):
             dlg.destroy()
 
         ttk.Button(btns, text="Tallenna", command=save_and_close).pack(side=tk.RIGHT, padx=(0, 8))
+
+        dlg.protocol("WM_DELETE_WINDOW", cancel_and_close)
 
         for i in range(2):
             outer.columnconfigure(i, weight=1)
@@ -558,35 +637,186 @@ class JugiAIApp(tk.Tk):
         except Exception:
             pass
 
-    def _load_watermark_image(self) -> None:
+    def _load_watermark_image(self, respect_visibility: bool = True) -> None:
         self._wm_img = None
-        if not self.config_dict.get("show_background", True):
+        self._wm_raw_img = None
+        self._wm_scaled_img = None
+        if respect_visibility and not self.config_dict.get("show_background", True):
+            self._remove_watermark_overlay()
             return
         path = self._resolve_default_logo()
         if not path:
+            self._remove_watermark_overlay()
             return
         try:
-            img = tk.PhotoImage(file=path)
-            subs = int(self.config_dict.get("background_subsample", 2))
-            subs = max(1, min(8, subs))
-            if subs > 1:
-                img = img.subsample(subs, subs)
-            self._wm_img = img
+            raw_img = tk.PhotoImage(file=path)
         except Exception:
-            self._wm_img = None
+            self._remove_watermark_overlay()
+            return
+        subs = int(self.config_dict.get("background_subsample", 2))
+        subs = max(1, min(8, subs))
+        try:
+            scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+        except Exception:
+            scaled = raw_img
+        opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+        opacity_val = max(0.0, min(1.0, opacity_val))
+        processed = self._apply_watermark_opacity(scaled, opacity_val)
+        self._wm_raw_img = raw_img
+        self._wm_scaled_img = scaled
+        self._wm_img = processed
 
     def _insert_watermark_if_needed(self) -> None:
-        if self._wm_inserted or not self._wm_img:
+        if not self._wm_img:
+            self._remove_watermark_overlay()
             return
-        self.chat.configure(state=tk.NORMAL)
+        self._ensure_watermark_overlay()
+        self._position_watermark_overlay()
+
+    def _ensure_watermark_overlay(self) -> None:
+        if not self._wm_img:
+            self._remove_watermark_overlay()
+            return
+        bg_color = "#0b1220"
         try:
-            self.chat.image_create("1.0", image=self._wm_img)
-            self.chat.insert("2.0", "\n")
-            self._wm_inserted = True
+            bg_color = self.chat.cget("bg")
         except Exception:
-            self._wm_inserted = False
-        finally:
-            self.chat.configure(state=tk.DISABLED)
+            pass
+        if self._wm_overlay is None:
+            self._wm_overlay = tk.Label(
+                self.chat,
+                image=self._wm_img,
+                borderwidth=0,
+                highlightthickness=0,
+                background=bg_color,
+                cursor="arrow",
+            )
+            self._wm_overlay.image = self._wm_img
+            self._bind_overlay_events()
+        else:
+            self._wm_overlay.configure(image=self._wm_img, background=bg_color)
+            self._wm_overlay.image = self._wm_img
+
+    def _bind_overlay_events(self) -> None:
+        if not self._wm_overlay:
+            return
+
+        def forward(sequence: str):
+            def _handler(event: tk.Event) -> str:
+                if not self._wm_overlay:
+                    return "break"
+                x = event.x + self._wm_overlay.winfo_x()
+                y = event.y + self._wm_overlay.winfo_y()
+                self.chat.event_generate(sequence, x=x, y=y, state=event.state)
+                return "break"
+
+            return _handler
+
+        for seq in ("<ButtonPress-1>", "<B1-Motion>", "<ButtonRelease-1>"):
+            self._wm_overlay.bind(seq, forward(seq))
+        self._wm_overlay.bind("<MouseWheel>", self._forward_mousewheel)
+        self._wm_overlay.bind("<Button-4>", self._forward_mousewheel)
+        self._wm_overlay.bind("<Button-5>", self._forward_mousewheel)
+
+    def _forward_mousewheel(self, event: tk.Event) -> str:
+        if event.num == 4:
+            self.chat.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.chat.yview_scroll(1, "units")
+        else:
+            delta = event.delta or 0
+            if delta:
+                self.chat.yview_scroll(int(-delta / 120), "units")
+        return "break"
+
+    def _position_watermark_overlay(self) -> None:
+        if not self._wm_overlay or not self._wm_img:
+            return
+        try:
+            self._wm_overlay.place(relx=0.5, rely=0.5, anchor="center")
+        except Exception:
+            pass
+
+    def _remove_watermark_overlay(self) -> None:
+        if self._wm_overlay is not None:
+            try:
+                self._wm_overlay.destroy()
+            except Exception:
+                pass
+            self._wm_overlay = None
+
+    def _preview_watermark_opacity(self, value: float, respect_visibility: bool = True) -> None:
+        if respect_visibility and not self.config_dict.get("show_background", True):
+            self._remove_watermark_overlay()
+            return
+        if not self._wm_scaled_img:
+            self._load_watermark_image(respect_visibility=respect_visibility)
+        if not self._wm_scaled_img:
+            return
+        value = max(0.0, min(1.0, float(value)))
+        new_img = self._apply_watermark_opacity(self._wm_scaled_img, value)
+        self._wm_img = new_img
+        self._ensure_watermark_overlay()
+        self._position_watermark_overlay()
+
+    def _apply_watermark_opacity(self, img: tk.PhotoImage, opacity: float) -> tk.PhotoImage:
+        opacity = max(0.0, min(1.0, float(opacity)))
+        try:
+            width = img.width()
+            height = img.height()
+        except Exception:
+            return img
+        if opacity >= 0.999:
+            try:
+                return img.copy()
+            except Exception:
+                return img
+        bg_color = "#0b1220"
+        try:
+            bg_color = self.chat.cget("bg")
+        except Exception:
+            pass
+        bg_rgb = self._hex_to_rgb(bg_color)
+        result = tk.PhotoImage(width=width, height=height)
+        for y in range(height):
+            row_colors = []
+            for x in range(width):
+                try:
+                    pixel = img.get(x, y)
+                except Exception:
+                    pixel = bg_color
+                if not pixel:
+                    blended_rgb = bg_rgb
+                else:
+                    rgb = self._hex_to_rgb(pixel)
+                    blended_rgb = (
+                        int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
+                        int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
+                        int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
+                    )
+                row_colors.append(self._rgb_to_hex(blended_rgb))
+            result.put("{" + " ".join(row_colors) + "}", to=(0, y))
+        return result
+
+    def _hex_to_rgb(self, value: str) -> tuple[int, int, int]:
+        value = (value or "").strip()
+        if value.startswith("#") and len(value) == 7:
+            try:
+                return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))
+            except Exception:
+                pass
+        try:
+            r, g, b = self.winfo_rgb(value)
+            return r // 256, g // 256, b // 256
+        except Exception:
+            return 11, 18, 32
+
+    def _rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
+        r, g, b = rgb
+        r = max(0, min(255, int(r)))
+        g = max(0, min(255, int(g)))
+        b = max(0, min(255, int(b)))
+        return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def main() -> None:
