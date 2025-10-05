@@ -11,20 +11,41 @@ Riippuvuudet: Vain Python 3:n standardikirjastot (tkinter, json, urllib). Ei vaa
 """
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import threading
+import time
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from datetime import datetime
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Any, Dict, List
+from typing import Any, Dict, Generator, List, Optional
 
-import urllib.request
 import urllib.error
+import urllib.request
 
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
+
+
+DEFAULT_PROFILE_NAME = "AnomFIN · AnomTools"
+DEFAULT_PROFILE: Dict[str, Any] = {
+    "name": DEFAULT_PROFILE_NAME,
+    "model": "gpt-4o-mini",
+    "system_prompt": (
+        "You are JugiAI, a helpful, concise assistant. "
+        "Respond in the user's language by default."
+    ),
+    "temperature": 0.7,
+    "top_p": 1.0,
+    "max_tokens": None,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "backend": "openai",
+}
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -50,21 +71,92 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "background_subsample": 2,
     # Typografia/kontrasti
     "font_size": 12,
+    # Profiilit
+    "profiles": {DEFAULT_PROFILE_NAME: DEFAULT_PROFILE},
+    "active_profile": DEFAULT_PROFILE_NAME,
+    # Mallivaihtoehdot pikanäppäimeen
+    "model_options": [
+        "gpt-4o-mini",
+        "gpt-4.1-mini",
+        "gpt-4o",
+        "o4-mini",
+        "o3-mini",
+    ],
 }
 
 
 class JugiAIApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("JugiAI")
-        self.minsize(720, 480)
+        self.title("JugiAI – AnomFIN · AnomTools")
+        self.minsize(780, 520)
 
         self.config_dict = self.load_config()
+        self._ensure_profiles()
+        self._apply_active_profile()
         self.history: List[Dict[str, str]] = []  # {role:"user"|"assistant", content:str}
         self._wm_img = None
         self._wm_inserted = False
         self.llm = None
         self.llm_model_path = None
+
+        self.pending_attachments: List[Dict[str, Any]] = []
+        self.stream_start_index: Optional[str] = None
+        self.current_stream_text: str = ""
+        self.current_stream_timestamp: Optional[str] = None
+
+        self.style = ttk.Style(self)
+        try:
+            self.style.theme_use("clam")
+        except Exception:
+            pass
+        self.configure(bg="#050914")
+        self.style.configure(
+            "Header.TFrame",
+            background="#050914",
+        )
+        self.style.configure(
+            "Header.TLabel",
+            background="#050914",
+            foreground="#f8fafc",
+            font=("Segoe UI", 13, "bold"),
+        )
+        self.style.configure(
+            "Subtle.TLabel",
+            background="#050914",
+            foreground="#9ca3af",
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Primary.TButton",
+            font=("Segoe UI", 11, "bold"),
+            padding=8,
+        )
+        self.style.map(
+            "Primary.TButton",
+            background=[("!disabled", "#2563eb"), ("pressed", "#1d4ed8")],
+            foreground=[("!disabled", "#f8fafc")],
+        )
+        self.style.configure(
+            "TFrame",
+            background="#050914",
+        )
+        self.style.configure(
+            "TLabel",
+            background="#050914",
+            foreground="#d1d5db",
+        )
+        self.style.configure(
+            "Card.TFrame",
+            background="#0f172a",
+            relief=tk.FLAT,
+            borderwidth=0,
+        )
+        self.style.configure(
+            "Card.TLabel",
+            background="#0f172a",
+            foreground="#e2e8f0",
+        )
 
         self._build_ui()
 
@@ -77,67 +169,375 @@ class JugiAIApp(tk.Tk):
         self._apply_icon_from_config()
         self._load_watermark_image()
         self._insert_watermark_if_needed()
+        self.after(1500, self._refresh_ping)
 
     # --- UI ---
+    def _ensure_profiles(self) -> None:
+        profiles = self.config_dict.get("profiles")
+        if not isinstance(profiles, dict) or not profiles:
+            self.config_dict["profiles"] = {DEFAULT_PROFILE_NAME: DEFAULT_PROFILE.copy()}
+            profiles = self.config_dict["profiles"]
+        else:
+            # varmista että jokainen profiili sisältää vähintään nimen
+            updated = {}
+            for key, value in profiles.items():
+                if isinstance(value, dict):
+                    v = DEFAULT_PROFILE.copy()
+                    v.update(value)
+                    if not v.get("name"):
+                        v["name"] = key
+                    updated[key] = v
+            if not updated:
+                updated = {DEFAULT_PROFILE_NAME: DEFAULT_PROFILE.copy()}
+            self.config_dict["profiles"] = updated
+            profiles = updated
+        active = self.config_dict.get("active_profile")
+        if active not in profiles:
+            self.config_dict["active_profile"] = next(iter(profiles.keys()))
+
+    def _apply_active_profile(self) -> None:
+        profiles = self.config_dict.get("profiles", {})
+        active = self.config_dict.get("active_profile")
+        profile = profiles.get(active)
+        if not isinstance(profile, dict):
+            return
+        keys = [
+            "model",
+            "system_prompt",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "presence_penalty",
+            "frequency_penalty",
+            "backend",
+        ]
+        for key in keys:
+            if key in profile:
+                self.config_dict[key] = profile[key]
+
+    def _apply_profile(self, name: str, persist: bool = True) -> None:
+        profiles = self.config_dict.get("profiles", {})
+        profile = profiles.get(name)
+        if not isinstance(profile, dict):
+            return
+        keys = [
+            "model",
+            "system_prompt",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "presence_penalty",
+            "frequency_penalty",
+            "backend",
+        ]
+        for key in keys:
+            if key in profile:
+                self.config_dict[key] = profile[key]
+        if persist:
+            self.config_dict["active_profile"] = name
+            self.save_config()
+        self._sync_quick_controls()
+
     def _build_ui(self) -> None:
         root = self
 
         # Header
-        header = ttk.Frame(root)
+        header = ttk.Frame(root, style="Header.TFrame", padding=(16, 12))
         header.pack(side=tk.TOP, fill=tk.X)
 
-        title_lbl = ttk.Label(header, text="JugiAI", font=("Segoe UI", 12, "bold"))
-        title_lbl.pack(side=tk.LEFT, padx=(10, 6), pady=6)
+        title_box = ttk.Frame(header, style="Header.TFrame")
+        title_box.pack(side=tk.LEFT, padx=(0, 16))
 
-        self.status_var = tk.StringVar(value="Valmis")
-        status_lbl = ttk.Label(header, textvariable=self.status_var, foreground="#6b7280")
-        status_lbl.pack(side=tk.LEFT, padx=6)
+        title_lbl = ttk.Label(
+            title_box,
+            text="JugiAI",
+            style="Header.TLabel",
+            font=("Segoe UI", 18, "bold"),
+        )
+        title_lbl.pack(anchor="w")
+        subtitle_lbl = ttk.Label(
+            title_box,
+            text="AnomFIN × AnomTools",
+            style="Subtle.TLabel",
+        )
+        subtitle_lbl.pack(anchor="w")
 
-        # Backend quick toggle
-        ttk.Label(header, text="Tausta:").pack(side=tk.RIGHT, padx=(0, 4))
-        self.backend_var_quick = tk.StringVar(value=self.config_dict.get("backend", "openai"))
-        backend_combo = ttk.Combobox(header, textvariable=self.backend_var_quick, values=["openai", "local"], width=8, state="readonly")
-        backend_combo.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
-        def on_backend_change(event=None):
-            self.config_dict["backend"] = self.backend_var_quick.get()
-            self.save_config()
-        backend_combo.bind("<<ComboboxSelected>>", on_backend_change)
+        status_box = ttk.Frame(header, style="Header.TFrame")
+        status_box.pack(side=tk.LEFT, padx=(0, 24))
+        self.ping_canvas = tk.Canvas(
+            status_box,
+            width=14,
+            height=14,
+            highlightthickness=0,
+            bg="#050914",
+            bd=0,
+        )
+        self.ping_canvas.pack(side=tk.LEFT, padx=(0, 6))
+        self.ping_indicator = self.ping_canvas.create_oval(2, 2, 12, 12, fill="#f59e0b", outline="")
+        self.ping_var = tk.StringVar(value="PING: -- ms")
+        ttk.Label(status_box, textvariable=self.ping_var, style="Subtle.TLabel").pack(side=tk.LEFT)
 
-        settings_btn = ttk.Button(header, text="⚙️", width=3, command=self.open_settings)
-        settings_btn.pack(side=tk.RIGHT, padx=(6, 10), pady=6)
-        clear_btn = ttk.Button(header, text="Tyhjennä", command=self.clear_history)
-        clear_btn.pack(side=tk.RIGHT, pady=6)
+        control_box = ttk.Frame(header, style="Header.TFrame")
+        control_box.pack(side=tk.RIGHT)
 
-        # Chat area
-        self.chat = ScrolledText(root, wrap=tk.WORD, state=tk.DISABLED)
-        self.chat.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
+        self.model_var_quick = tk.StringVar(value=self.config_dict.get("model", "gpt-4o-mini"))
+        ttk.Label(control_box, text="Kielimalli:", style="Subtle.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        model_values = self._resolve_model_options()
+        self.model_combo = ttk.Combobox(
+            control_box,
+            textvariable=self.model_var_quick,
+            values=model_values,
+            state="readonly",
+            width=18,
+        )
+        self.model_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_quick_change)
 
-        # Dark-ish theme for contrast
+        ttk.Button(control_box, text="Tyhjennä", command=self.clear_history).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(control_box, text="⚙️", width=3, command=self.open_settings).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(control_box, text="Profiilit", command=self.open_profiles).pack(side=tk.RIGHT, padx=(8, 0))
+
+        # Typing indicator label
+        self.typing_status_var = tk.StringVar(value="Valmis")
+        ttk.Label(root, textvariable=self.typing_status_var, style="Subtle.TLabel").pack(
+            side=tk.TOP, anchor="w", padx=20, pady=(0, 4)
+        )
+
+        # Chat area card
+        chat_card = ttk.Frame(root, style="Card.TFrame", padding=16)
+        chat_card.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
+
+        self.chat = ScrolledText(chat_card, wrap=tk.WORD, state=tk.DISABLED, relief=tk.FLAT, borderwidth=0)
+        self.chat.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
         try:
             fs = int(self.config_dict.get("font_size", 12))
         except Exception:
             fs = 12
-        self.chat.configure(bg="#0b1220", fg="#e5e7eb", insertbackground="#e5e7eb", font=("Segoe UI", fs))
+        self.chat.configure(
+            bg="#0b1220",
+            fg="#e5e7eb",
+            insertbackground="#e5e7eb",
+            font=("Segoe UI", fs),
+            spacing1=4,
+            spacing2=2,
+            padx=8,
+            pady=8,
+        )
 
-        # Tagit rooleille
-        self.chat.tag_configure("role_user", foreground="#93c5fd")
-        self.chat.tag_configure("role_assistant", foreground="#34d399")
-        self.chat.tag_configure("error", foreground="#f87171")
+        self.chat.tag_configure("role_user", foreground="#bfdbfe", font=("Segoe UI", fs))
+        self.chat.tag_configure("role_assistant", foreground="#6ee7b7", font=("Segoe UI", fs))
+        self.chat.tag_configure("error", foreground="#f87171", font=("Segoe UI", fs))
+        self.chat.tag_configure("header_user", foreground="#93c5fd", font=("Segoe UI", fs, "bold"))
+        self.chat.tag_configure("header_assistant", foreground="#5eead4", font=("Segoe UI", fs, "bold"))
+        self.chat.tag_configure("attachment", foreground="#facc15", font=("Segoe UI", fs - 1))
+        self.chat.tag_configure("separator_user", foreground="#1d4ed8")
+        self.chat.tag_configure("separator_assistant", foreground="#0f766e")
 
-        # Input area
-        input_frame = ttk.Frame(root)
-        input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=8)
+        # Input area card
+        input_card = ttk.Frame(root, style="Card.TFrame", padding=16)
+        input_card.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 16))
 
-        self.input = tk.Text(input_frame, height=3, wrap=tk.WORD)
-        self.input.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.input.configure(bg="#111827", fg="#e5e7eb", insertbackground="#e5e7eb", font=("Segoe UI", fs))
+        attachments_bar = ttk.Frame(input_card, style="Card.TFrame")
+        attachments_bar.pack(side=tk.TOP, fill=tk.X)
+        ttk.Button(attachments_bar, text="📎 Liitä tiedosto", command=self.add_attachment).pack(side=tk.LEFT)
+        self.attachments_container = ttk.Frame(attachments_bar, style="Card.TFrame")
+        self.attachments_container.pack(side=tk.LEFT, padx=(12, 0), fill=tk.X, expand=True)
 
-        self.send_btn = ttk.Button(input_frame, text="Lähetä", command=self.on_send)
-        self.send_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.input = tk.Text(input_card, height=4, wrap=tk.WORD, relief=tk.FLAT)
+        self.input.pack(side=tk.TOP, fill=tk.X, expand=True, pady=(12, 12))
+        self.input.configure(
+            bg="#111827",
+            fg="#e5e7eb",
+            insertbackground="#e5e7eb",
+            font=("Segoe UI", fs),
+            spacing1=4,
+            spacing2=2,
+            padx=10,
+            pady=10,
+            highlightthickness=1,
+            highlightcolor="#1f2937",
+            highlightbackground="#1f2937",
+        )
+
+        action_row = ttk.Frame(input_card, style="Card.TFrame")
+        action_row.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Label(action_row, text="Vaihto+Enter = rivinvaihto", style="Subtle.TLabel").pack(side=tk.LEFT)
+        self.send_btn = ttk.Button(action_row, text="Lähetä ✈️", style="Primary.TButton", command=self.on_send)
+        self.send_btn.pack(side=tk.RIGHT)
 
         # Enter = lähetys, Shift+Enter = rivinvaihto
         self.input.bind("<Shift-Return>", self._newline)
         self.input.bind("<Return>", self._enter_send)
+        self._refresh_attachment_chips()
+
+    def _resolve_model_options(self) -> List[str]:
+        options = self.config_dict.get("model_options")
+        if isinstance(options, list) and options:
+            return [str(o) for o in options]
+        return ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini", "o3-mini"]
+
+    def _on_model_quick_change(self, event=None) -> None:
+        value = self.model_var_quick.get().strip()
+        if not value:
+            return
+        self.config_dict["model"] = value
+        profiles = self.config_dict.get("profiles", {})
+        active = self.config_dict.get("active_profile")
+        if active in profiles and isinstance(profiles[active], dict):
+            profiles[active]["model"] = value
+        self.save_config()
+
+    def _sync_quick_controls(self) -> None:
+        if hasattr(self, "model_var_quick"):
+            self.model_var_quick.set(self.config_dict.get("model", "gpt-4o-mini"))
+
+    def _refresh_attachment_chips(self) -> None:
+        for child in list(self.attachments_container.winfo_children()):
+            child.destroy()
+        if not self.pending_attachments:
+            ttk.Label(
+                self.attachments_container,
+                text="Ei liitteitä",
+                style="Subtle.TLabel",
+            ).pack(side=tk.LEFT)
+            return
+        for idx, att in enumerate(self.pending_attachments):
+            chip = ttk.Frame(self.attachments_container, style="Card.TFrame")
+            chip.pack(side=tk.LEFT, padx=(0, 8))
+            name = att.get("name", "liite")
+            ttk.Label(chip, text=f"📎 {name}", style="Card.TLabel").pack(side=tk.LEFT)
+            ttk.Button(
+                chip,
+                text="✕",
+                width=2,
+                command=lambda i=idx: self.remove_attachment(i),
+            ).pack(side=tk.LEFT, padx=(4, 0))
+
+    def add_attachment(self) -> None:
+        paths = filedialog.askopenfilenames(title="Valitse liitteet")
+        if not paths:
+            return
+        added = False
+        for path in paths:
+            try:
+                size = os.path.getsize(path)
+                with open(path, "rb") as f:
+                    data = f.read()
+                if size > 4 * 1024 * 1024:
+                    if not messagebox.askyesno(
+                        "Suuri tiedosto",
+                        f"Tiedosto {os.path.basename(path)} on {size} tavua. Lisätäänkö silti?",
+                    ):
+                        continue
+                encoded = base64.b64encode(data).decode("ascii")
+                mime, _ = mimetypes.guess_type(path)
+                self.pending_attachments.append(
+                    {
+                        "name": os.path.basename(path),
+                        "mime": mime or "tuntematon",
+                        "size": size,
+                        "data": encoded,
+                    }
+                )
+                added = True
+            except Exception as e:
+                messagebox.showerror("Liitteen lisäys epäonnistui", str(e))
+        if added:
+            self._refresh_attachment_chips()
+
+    def remove_attachment(self, index: int) -> None:
+        if 0 <= index < len(self.pending_attachments):
+            del self.pending_attachments[index]
+            self._refresh_attachment_chips()
+
+    def start_assistant_stream(self, timestamp: str) -> None:
+        self.current_stream_text = ""
+        self.stream_start_index = None
+        self.chat.configure(state=tk.NORMAL)
+        self.chat.insert(tk.END, "▮ ", ("separator_assistant",))
+        self.chat.insert(tk.END, f"JugiAI · {timestamp}\n", ("header_assistant",))
+        self.stream_start_index = self.chat.index(tk.END)
+        self.chat.insert(tk.END, "JugiAI työskentelee…\n\n", ("role_assistant",))
+        self.chat.see(tk.END)
+        self.chat.configure(state=tk.DISABLED)
+
+    def update_assistant_stream(self, content: str) -> None:
+        if self.stream_start_index is None:
+            return
+        self.current_stream_text = content
+        display = content.strip() or "…"
+        self.chat.configure(state=tk.NORMAL)
+        self.chat.delete(self.stream_start_index, tk.END)
+        self.chat.insert(tk.END, display + "\n\n", ("role_assistant",))
+        self.chat.configure(state=tk.DISABLED)
+        self.chat.see(tk.END)
+
+    def finalize_assistant_stream(self, content: str) -> None:
+        self.update_assistant_stream(content.strip())
+        self.stream_start_index = None
+
+    def handle_stream_failure(self, message: str) -> None:
+        if self.stream_start_index is not None:
+            self.chat.configure(state=tk.NORMAL)
+            self.chat.delete(self.stream_start_index, tk.END)
+            self.chat.insert(tk.END, f"⚠️ {message}\n\n", ("error",))
+            self.chat.configure(state=tk.DISABLED)
+            self.chat.see(tk.END)
+            self.stream_start_index = None
+        else:
+            self.append_error(message)
+
+    def _timestamp_now(self) -> str:
+        return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+    def _update_ping_indicator(self, latency: Optional[int], state: str) -> None:
+        colors = {
+            "ok": "#22c55e",
+            "warn": "#facc15",
+            "error": "#ef4444",
+        }
+        color = colors.get(state, "#facc15")
+        try:
+            self.ping_canvas.itemconfig(self.ping_indicator, fill=color)
+        except Exception:
+            pass
+        if state == "ok" and latency is not None:
+            self.ping_var.set(f"PING: {latency} ms")
+        elif state == "warn" and latency is not None:
+            self.ping_var.set(f"PING: {latency} ms (varoitus)")
+        else:
+            self.ping_var.set("PING: -- ms (ei yhteyttä)")
+
+    def _refresh_ping(self) -> None:
+        def worker() -> None:
+            api_key = self.config_dict.get("api_key", "").strip()
+            url = "https://api.openai.com/v1/models"
+            req = urllib.request.Request(url, method="GET")
+            if api_key:
+                req.add_header("Authorization", f"Bearer {api_key}")
+            start = time.time()
+            latency: Optional[int] = None
+            state = "error"
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    resp.read(1)
+                latency = int((time.time() - start) * 1000)
+                state = "ok"
+            except urllib.error.HTTPError as e:
+                latency = int((time.time() - start) * 1000)
+                if e.code in (401, 403):
+                    state = "warn" if not api_key else "ok"
+                else:
+                    state = "warn"
+            except urllib.error.URLError:
+                state = "error"
+            except Exception:
+                state = "error"
+            self.after(0, lambda: self._update_ping_indicator(latency, state))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(8000, self._refresh_ping)
 
     def _newline(self, event):
         self.input.insert(tk.INSERT, "\n")
@@ -168,26 +568,53 @@ class JugiAIApp(tk.Tk):
             messagebox.showerror("Virhe", f"Asetusten tallennus epäonnistui: {e}")
 
     # --- Chat helpers ---
-    def append_message(self, role: str, content: str) -> None:
+    def append_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        timestamp: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        ts = timestamp or self._timestamp_now()
+        display_name = "JugiAI" if role == "assistant" else "Sinä"
+        header_tag = "header_assistant" if role == "assistant" else "header_user"
+        separator_tag = "separator_assistant" if role == "assistant" else "separator_user"
+        body_tag = "role_assistant" if role == "assistant" else "role_user"
+        content = (content or "").strip()
+
         self.chat.configure(state=tk.NORMAL)
-        tag = "role_assistant" if role == "assistant" else "role_user"
-        header = "JugiAI" if role == "assistant" else "Käyttäjä"
-        self.chat.insert(tk.END, f"{header}:\n", tag)
-        self.chat.insert(tk.END, content.strip() + "\n\n")
+        self.chat.insert(tk.END, "▮ ", (separator_tag,))
+        self.chat.insert(tk.END, f"{display_name} · {ts}\n", (header_tag,))
+        if content:
+            self.chat.insert(tk.END, content + "\n", (body_tag,))
+        if attachments:
+            for att in attachments:
+                name = att.get("name", "tuntematon")
+                mime = att.get("mime", "tiedosto")
+                size = att.get("size")
+                size_text = f", {size} tavua" if isinstance(size, int) else ""
+                self.chat.insert(
+                    tk.END,
+                    f"   📎 {name} ({mime}{size_text})\n",
+                    ("attachment",),
+                )
+        self.chat.insert(tk.END, "\n")
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
 
     def append_error(self, content: str) -> None:
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, "Virhe:\n", ("error",))
-        self.chat.insert(tk.END, content.strip() + "\n\n")
+        self.chat.insert(tk.END, "⚠️ Virhe\n", ("error",))
+        self.chat.insert(tk.END, content.strip() + "\n\n", ("error",))
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
 
     # --- Events ---
     def on_send(self) -> None:
         text = self.input.get("1.0", tk.END).strip()
-        if not text:
+        attachments = [att.copy() for att in self.pending_attachments]
+        if not text and not attachments:
             return
         if self.config_dict.get("backend", "openai").lower() == "openai":
             if not self.config_dict.get("api_key"):
@@ -195,65 +622,121 @@ class JugiAIApp(tk.Tk):
                 self.open_settings()
                 return
 
+        timestamp = self._timestamp_now()
+
         # UI-tila ja viestit
         self.input.delete("1.0", tk.END)
-        self.append_message("user", text)
-        self.history.append({"role": "user", "content": text})
+        display_text = text if text else "(Liitteet lähetetty)"
+        self.append_message("user", display_text, timestamp=timestamp, attachments=attachments)
+
+        history_entry = {
+            "role": "user",
+            "content": display_text,
+            "attachments": attachments,
+            "timestamp": timestamp,
+        }
+        self.history.append(history_entry)
         self.save_history()
 
+        self.pending_attachments = []
+        self._refresh_attachment_chips()
+
         self.set_busy(True)
+        self.current_stream_timestamp = self._timestamp_now()
+        self.start_assistant_stream(self.current_stream_timestamp)
         threading.Thread(target=self._worker_call_openai, daemon=True).start()
 
     def set_busy(self, busy: bool) -> None:
         if busy:
-            self.status_var.set("Kirjoittaa…")
+            self.typing_status_var.set("JugiAI työskentelee…")
             self.send_btn.configure(state=tk.DISABLED)
         else:
-            self.status_var.set("Valmis")
+            self.typing_status_var.set("Valmis")
             self.send_btn.configure(state=tk.NORMAL)
 
     # --- Model call ---
     def _worker_call_openai(self) -> None:
+        accumulated = ""
         try:
-            assistant_text = self.call_model_backend()
+            for chunk in self.stream_model_backend():
+                if not chunk:
+                    continue
+                accumulated += chunk
+                text_snapshot = accumulated
+                self.after(0, lambda t=text_snapshot: self.update_assistant_stream(t))
         except Exception as e:
             msg = str(e)
-            self.after(0, lambda: self.append_error(msg))
+            self.after(0, lambda m=msg: self.handle_stream_failure(m))
             self.after(0, lambda: self.set_busy(False))
+            self.current_stream_timestamp = None
             return
 
-        self.history.append({"role": "assistant", "content": assistant_text})
-        self.after(0, lambda: self.append_message("assistant", assistant_text))
+        final_text = accumulated.strip()
+        if not final_text:
+            final_text = "(Ei vastausta)"
+        timestamp = self.current_stream_timestamp or self._timestamp_now()
+        history_entry = {
+            "role": "assistant",
+            "content": final_text,
+            "attachments": [],
+            "timestamp": timestamp,
+        }
+        self.history.append(history_entry)
+        self.after(0, lambda text=final_text: self.finalize_assistant_stream(text))
         self.after(0, self.save_history)
         self.after(0, lambda: self.set_busy(False))
+        self.current_stream_timestamp = None
 
-    def call_model_backend(self) -> str:
-        backend = self.config_dict.get("backend", "openai").lower()
+    def stream_model_backend(self) -> Generator[str, None, None]:
+        backend = (self.config_dict.get("backend", "openai") or "openai").lower()
         if backend == "local":
-            return self._call_local_llm()
-        return self._call_openai()
+            yield from self._call_local_llm_stream()
+        else:
+            yield from self._call_openai_stream()
 
-    def _call_openai(self) -> str:
+    def _build_messages_for_backend(self) -> List[Dict[str, Any]]:
+        cfg = self.config_dict
+        messages: List[Dict[str, Any]] = []
+        sys_prompt = (cfg.get("system_prompt") or "").strip()
+        if sys_prompt:
+            messages.append({"role": "system", "content": sys_prompt})
+        for msg in self.history:
+            role = msg.get("role", "user")
+            messages.append({"role": role, "content": self._compose_message_for_backend(msg)})
+        return messages
+
+    def _compose_message_for_backend(self, message: Dict[str, Any]) -> str:
+        text = (message.get("content") or "").strip()
+        attachments = message.get("attachments") or []
+        if not attachments:
+            return text
+        lines = [text] if text else []
+        lines.append("Liitteet (base64-muodossa):")
+        for att in attachments:
+            name = att.get("name", "liite")
+            mime = att.get("mime", "tuntematon")
+            size = att.get("size")
+            size_info = f", {size} tavua" if isinstance(size, int) else ""
+            data = att.get("data", "")
+            lines.append(f"{name} ({mime}{size_info})")
+            lines.append(f"BASE64:{data}")
+        return "\n".join(lines)
+
+    def _call_openai_stream(self) -> Generator[str, None, None]:
         cfg = self.config_dict
         api_key = cfg.get("api_key")
         if not api_key:
             raise RuntimeError("API-avain puuttuu asetuksista.")
 
         url = "https://api.openai.com/v1/chat/completions"
-
-        messages: List[Dict[str, str]] = []
-        sys_prompt = (cfg.get("system_prompt") or "").strip()
-        if sys_prompt:
-            messages.append({"role": "system", "content": sys_prompt})
-        messages.extend(self.history)
-
         payload: Dict[str, Any] = {
             "model": cfg.get("model", "gpt-4o-mini"),
-            "messages": messages,
+            "messages": self._build_messages_for_backend(),
             "temperature": float(cfg.get("temperature", 0.7)),
             "top_p": float(cfg.get("top_p", 1.0)),
             "presence_penalty": float(cfg.get("presence_penalty", 0.0)),
             "frequency_penalty": float(cfg.get("frequency_penalty", 0.0)),
+            "stream": True,
         }
         max_tokens = cfg.get("max_tokens")
         if isinstance(max_tokens, int) and max_tokens > 0:
@@ -272,26 +755,41 @@ class JugiAIApp(tk.Tk):
 
         try:
             with urllib.request.urlopen(req, timeout=90) as resp:
-                body = resp.read()
+                for raw_line in resp:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if not line.startswith(b"data:"):
+                        continue
+                    chunk_data = line[len(b"data:") :].strip()
+                    if not chunk_data or chunk_data == b"[DONE]":
+                        if chunk_data == b"[DONE]":
+                            break
+                        continue
+                    try:
+                        parsed = json.loads(chunk_data.decode("utf-8"))
+                    except Exception:
+                        continue
+                    choices = parsed.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        yield text
         except urllib.error.HTTPError as e:
             try:
                 err_body = e.read().decode("utf-8", errors="ignore")
             except Exception:
                 err_body = str(e)
-            raise RuntimeError(f"API virhe: {e.code} {err_body}")
+            raise RuntimeError(f"API virhe: {e.code} {err_body}") from None
         except urllib.error.URLError as e:
-            raise RuntimeError(f"Verkkovirhe: {e}")
+            raise RuntimeError(f"Verkkovirhe: {e}") from None
 
-        try:
-            j = json.loads(body.decode("utf-8"))
-        except Exception:
-            raise RuntimeError("Palvelun vastausta ei voitu jäsentää JSONiksi.")
-
-        try:
-            content = j["choices"][0]["message"]["content"]
-        except Exception:
-            content = json.dumps(j, ensure_ascii=False)
-        return content or ""
+    def _call_local_llm_stream(self) -> Generator[str, None, None]:
+        text = self._call_local_llm()
+        for chunk in self._chunk_text(text):
+            yield chunk
 
     def _call_local_llm(self) -> str:
         cfg = self.config_dict
@@ -311,11 +809,7 @@ class JugiAIApp(tk.Tk):
             )
             self.llm_model_path = model_path
 
-        messages: List[Dict[str, str]] = []
-        sys_prompt = (cfg.get("system_prompt") or "").strip()
-        if sys_prompt:
-            messages.append({"role": "system", "content": sys_prompt})
-        messages.extend(self.history)
+        messages = self._build_messages_for_backend()
 
         params = {
             "messages": messages,
@@ -330,7 +824,14 @@ class JugiAIApp(tk.Tk):
             content = out["choices"][0]["message"]["content"]
         except Exception:
             # Fallback yksinkertaiseen prompttiin
-            user_texts = "\n\n".join([m["content"] for m in self.history if m["role"] == "user"]) or ""
+            sys_prompt = (cfg.get("system_prompt") or "").strip()
+            user_texts = "\n\n".join(
+                [
+                    self._compose_message_for_backend(m)
+                    for m in self.history
+                    if m.get("role") == "user"
+                ]
+            )
             prompt = (sys_prompt + "\n\n" + user_texts).strip()
             out = self.llm(
                 prompt=prompt,
@@ -341,14 +842,33 @@ class JugiAIApp(tk.Tk):
             content = out.get("choices", [{}])[0].get("text", "")
         return content or ""
 
+    def _chunk_text(self, text: str, chunk_size: int = 80) -> Generator[str, None, None]:
+        buffer = ""
+        for char in text:
+            buffer += char
+            if len(buffer) >= chunk_size and char in ".!?\n ":
+                yield buffer
+                buffer = ""
+        if buffer:
+            yield buffer
+
     # --- Persistence ---
     def load_history(self) -> None:
         if os.path.exists(HISTORY_FILE):
             try:
                 with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                    self.history = json.load(f)
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self.history = data
+                else:
+                    self.history = []
                 for m in self.history:
-                    self.append_message(m.get("role", "user"), m.get("content", ""))
+                    self.append_message(
+                        m.get("role", "user"),
+                        m.get("content", ""),
+                        timestamp=m.get("timestamp"),
+                        attachments=m.get("attachments"),
+                    )
             except Exception:
                 self.history = []
 
@@ -369,6 +889,213 @@ class JugiAIApp(tk.Tk):
         self.save_history()
         self._wm_inserted = False
         self._insert_watermark_if_needed()
+
+    def open_profiles(self) -> None:
+        profiles = self.config_dict.get("profiles", {})
+        dlg = tk.Toplevel(self)
+        dlg.title("Profiilit – JugiAI")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.geometry("800x520")
+
+        container = ttk.Frame(dlg, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        list_frame = ttk.Frame(container)
+        list_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 12))
+        ttk.Label(list_frame, text="Profiilit", style="Header.TLabel").pack(anchor="w")
+        profile_list = tk.Listbox(list_frame, height=18, exportselection=False)
+        profile_list.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+
+        detail = ttk.Frame(container, style="Card.TFrame", padding=12)
+        detail.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        name_var = tk.StringVar()
+        model_var = tk.StringVar()
+        temp_var = tk.DoubleVar()
+        top_p_var = tk.DoubleVar()
+        max_tokens_var = tk.StringVar()
+        presence_var = tk.DoubleVar()
+        frequency_var = tk.DoubleVar()
+        backend_var = tk.StringVar()
+
+        row = 0
+        ttk.Label(detail, text="Nimi", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W)
+        ttk.Entry(detail, textvariable=name_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0))
+        row += 1
+        ttk.Label(detail, text="Malli", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Entry(detail, textvariable=model_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="Temperature", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Spinbox(detail, from_=0.0, to=2.0, increment=0.05, textvariable=temp_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="top_p", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Spinbox(detail, from_=0.0, to=1.0, increment=0.05, textvariable=top_p_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="max_tokens", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Entry(detail, textvariable=max_tokens_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="presence_penalty", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Spinbox(detail, from_=-2.0, to=2.0, increment=0.1, textvariable=presence_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="frequency_penalty", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Spinbox(detail, from_=-2.0, to=2.0, increment=0.1, textvariable=frequency_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="Backend", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Combobox(detail, textvariable=backend_var, values=["openai", "local"], state="readonly").grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="System-prompt", style="Card.TLabel").grid(row=row, column=0, sticky=tk.NW, pady=(8, 0))
+        prompt_txt = ScrolledText(detail, height=6, wrap=tk.WORD)
+        prompt_txt.grid(row=row, column=1, sticky=tk.NSEW, padx=(8, 0), pady=(8, 0))
+
+        for i in range(2):
+            detail.columnconfigure(i, weight=1)
+        detail.rowconfigure(row, weight=1)
+
+        profile_names: List[str] = []
+
+        def refresh_list(select_name: Optional[str] = None) -> None:
+            profile_list.delete(0, tk.END)
+            profile_names.clear()
+            active_name = self.config_dict.get("active_profile")
+            for name in profiles.keys():
+                label = name + (" ★" if name == active_name else "")
+                profile_names.append(name)
+                profile_list.insert(tk.END, label)
+            if select_name and select_name in profiles:
+                idx = profile_names.index(select_name)
+                profile_list.selection_clear(0, tk.END)
+                profile_list.selection_set(idx)
+                profile_list.event_generate("<<ListboxSelect>>")
+
+        def load_selected(event=None) -> None:
+            selection = profile_list.curselection()
+            if not selection:
+                return
+            name = profile_names[selection[0]]
+            data = profiles.get(name, {})
+            name_var.set(data.get("name", name))
+            model_var.set(data.get("model", self.config_dict.get("model", DEFAULT_CONFIG["model"])))
+            temp_var.set(float(data.get("temperature", 0.7)))
+            top_p_var.set(float(data.get("top_p", 1.0)))
+            mt = data.get("max_tokens")
+            max_tokens_var.set(str(int(mt)) if isinstance(mt, int) else "")
+            presence_var.set(float(data.get("presence_penalty", 0.0)))
+            frequency_var.set(float(data.get("frequency_penalty", 0.0)))
+            backend_var.set(data.get("backend", "openai"))
+            prompt_txt.delete("1.0", tk.END)
+            prompt_txt.insert("1.0", data.get("system_prompt", self.config_dict.get("system_prompt", "")))
+
+        profile_list.bind("<<ListboxSelect>>", load_selected)
+
+        def save_profile(show_info: bool = True) -> Optional[str]:
+            selection = profile_list.curselection()
+            if not selection:
+                if show_info:
+                    messagebox.showinfo("Valinta puuttuu", "Valitse profiili listasta.")
+                return None
+            key = profile_names[selection[0]]
+            new_name = name_var.get().strip() or key
+            max_tokens_value = max_tokens_var.get().strip()
+            profile_data = {
+                "name": new_name,
+                "model": model_var.get().strip() or self.config_dict.get("model", DEFAULT_CONFIG["model"]),
+                "system_prompt": prompt_txt.get("1.0", tk.END).strip() or DEFAULT_PROFILE["system_prompt"],
+                "temperature": float(f"{temp_var.get():.3f}"),
+                "top_p": float(f"{top_p_var.get():.3f}"),
+                "max_tokens": int(max_tokens_value) if max_tokens_value.isdigit() else None,
+                "presence_penalty": float(f"{presence_var.get():.3f}"),
+                "frequency_penalty": float(f"{frequency_var.get():.3f}"),
+                "backend": backend_var.get().strip() or "openai",
+            }
+            if new_name != key:
+                if new_name in profiles:
+                    messagebox.showerror("Virhe", "Samanniminen profiili on jo olemassa.")
+                    return None
+                profiles.pop(key, None)
+            profiles[new_name] = profile_data
+            if self.config_dict.get("active_profile") == key:
+                self.config_dict["active_profile"] = new_name
+            self.config_dict["profiles"] = profiles
+            self.save_config()
+            if show_info:
+                messagebox.showinfo("Tallennettu", f"Profiili '{new_name}' tallennettiin.")
+            refresh_list(new_name)
+            return new_name
+
+        def activate_profile() -> None:
+            name = save_profile(show_info=False)
+            if not name:
+                return
+            self._apply_profile(name, persist=True)
+            messagebox.showinfo("Profiili aktivoitu", f"Profiili '{name}' asetettiin oletukseksi.")
+            refresh_list(name)
+
+        def apply_profile_once() -> None:
+            selection = profile_list.curselection()
+            if not selection:
+                messagebox.showinfo("Valinta puuttuu", "Valitse profiili listasta.")
+                return
+            name = profile_names[selection[0]]
+            save_profile(show_info=False)
+            self._apply_profile(name, persist=False)
+            messagebox.showinfo("Profiili ladattu", f"Profiili '{name}' otettiin käyttöön täksi istunnoksi.")
+
+        def new_profile() -> None:
+            name = simpledialog.askstring("Uusi profiili", "Anna profiilin nimi:")
+            if not name:
+                return
+            if name in profiles:
+                messagebox.showerror("Virhe", "Samanniminen profiili on jo olemassa.")
+                return
+            profiles[name] = {
+                "name": name,
+                "model": self.config_dict.get("model", DEFAULT_CONFIG["model"]),
+                "system_prompt": self.config_dict.get("system_prompt", DEFAULT_PROFILE["system_prompt"]),
+                "temperature": float(self.config_dict.get("temperature", 0.7)),
+                "top_p": float(self.config_dict.get("top_p", 1.0)),
+                "max_tokens": self.config_dict.get("max_tokens"),
+                "presence_penalty": float(self.config_dict.get("presence_penalty", 0.0)),
+                "frequency_penalty": float(self.config_dict.get("frequency_penalty", 0.0)),
+                "backend": self.config_dict.get("backend", "openai"),
+            }
+            self.config_dict["profiles"] = profiles
+            self.save_config()
+            refresh_list(name)
+
+        def delete_profile() -> None:
+            selection = profile_list.curselection()
+            if not selection:
+                messagebox.showinfo("Valinta puuttuu", "Valitse poistettava profiili.")
+                return
+            name = profile_names[selection[0]]
+            if len(profiles) <= 1:
+                messagebox.showinfo("Ei voida poistaa", "Järjestelmä tarvitsee vähintään yhden profiilin.")
+                return
+            if not messagebox.askyesno("Vahvista", f"Poistetaanko profiili '{name}'?"):
+                return
+            profiles.pop(name, None)
+            self.config_dict["profiles"] = profiles
+            if self.config_dict.get("active_profile") == name:
+                fallback = next(iter(profiles.keys()))
+                self._apply_profile(fallback, persist=True)
+            else:
+                self.save_config()
+            refresh_list(next(iter(profiles.keys()), None))
+
+        btns = ttk.Frame(dlg, padding=12)
+        btns.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Button(btns, text="Uusi profiili", command=new_profile).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Poista", command=delete_profile).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btns, text="Tallenna muutokset", command=save_profile).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="Aktivoi oletukseksi", command=activate_profile).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(btns, text="Lataa tähän istuntoon", command=apply_profile_once).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(btns, text="Sulje", command=dlg.destroy).pack(side=tk.RIGHT, padx=(8, 0))
+
+        refresh_list(self.config_dict.get("active_profile"))
+        if not profile_list.curselection() and profile_names:
+            profile_list.selection_set(0)
+            profile_list.event_generate("<<ListboxSelect>>")
 
     # --- Settings dialog ---
     def open_settings(self) -> None:
@@ -410,21 +1137,31 @@ class JugiAIApp(tk.Tk):
         temp_var = tk.DoubleVar(value=float(self.config_dict.get("temperature", 0.7)))
         ttk.Scale(g, from_=0.0, to=2.0, variable=temp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         row += 1
+        ttk.Label(g, text="Säätelee luovuuden ja satunnaisuuden määrää.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
         ttk.Label(g, text="top_p (0–1):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         top_p_var = tk.DoubleVar(value=float(self.config_dict.get("top_p", 1.0)))
         ttk.Scale(g, from_=0.0, to=1.0, variable=top_p_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(g, text="Rajoittaa todennäköisyysmassaa – pienempi arvo keskittyy varmoihin vastauksiin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="max_tokens (tyhjä = ei rajaa):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         mt_var = tk.StringVar(value=str(self.config_dict.get("max_tokens")) if self.config_dict.get("max_tokens") else "")
         ttk.Entry(g, textvariable=mt_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         row += 1
+        ttk.Label(g, text="Määrittää vastauksen maksimipituuden token-määränä.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
         ttk.Label(g, text="presence_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         pp_var = tk.DoubleVar(value=float(self.config_dict.get("presence_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=pp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         row += 1
+        ttk.Label(g, text="Kannustaa uusiin aiheisiin – suurempi arvo vähentää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
         ttk.Label(g, text="frequency_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         fp_var = tk.DoubleVar(value=float(self.config_dict.get("frequency_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=fp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(g, text="Vähentää saman sanan toistumista useita kertoja peräkkäin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         for i in range(2):
             g.columnconfigure(i, weight=1)
@@ -506,8 +1243,6 @@ class JugiAIApp(tk.Tk):
             self.config_dict["presence_penalty"] = float(f"{pp_var.get():.3f}")
             self.config_dict["frequency_penalty"] = float(f"{fp_var.get():.3f}")
             self.config_dict["backend"] = backend_var.get().strip() or "openai"
-            # Sync quick toggle too
-            self.backend_var_quick.set(self.config_dict["backend"]) 
             self.config_dict["local_model_path"] = lpath_var.get().strip()
             self.config_dict["local_threads"] = int(lthr_var.get()) if str(lthr_var.get()).isdigit() else 0
             self.config_dict["background_path"] = bg_var.get().strip()
@@ -521,6 +1256,7 @@ class JugiAIApp(tk.Tk):
             except Exception:
                 self.config_dict["font_size"] = 12
             self.save_config()
+            self._sync_quick_controls()
             self._apply_icon_from_config()
             self._load_watermark_image()
             self._wm_inserted = False
