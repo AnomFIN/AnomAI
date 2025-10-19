@@ -113,41 +113,42 @@ class JugiAIApp(tk.Tk):
             self.style.theme_use("clam")
         except Exception:
             pass
-        self.configure(bg="#050914")
+
+        self.configure(bg="#020617")
+        self.style.configure("TFrame", background="#020617")
+        self.style.configure("TLabel", background="#020617", foreground="#e2e8f0")
+
+        self.style.configure("Nav.TFrame", background="#010b1a")
         self.style.configure(
-            "Header.TFrame",
-            background="#050914",
+            "Brand.TLabel",
+            background="#010b1a",
+            foreground="#e0f2fe",
+            font=("Segoe UI Semibold", 20, "bold"),
         )
         self.style.configure(
-            "Header.TLabel",
-            background="#050914",
-            foreground="#f8fafc",
-            font=("Segoe UI", 13, "bold"),
+            "NavSubtitle.TLabel",
+            background="#010b1a",
+            foreground="#94a3b8",
+            font=("Segoe UI", 11),
         )
         self.style.configure(
             "Subtle.TLabel",
-            background="#050914",
-            foreground="#9ca3af",
+            background="#020617",
+            foreground="#94a3b8",
             font=("Segoe UI", 10),
         )
         self.style.configure(
-            "Primary.TButton",
-            font=("Segoe UI", 11, "bold"),
-            padding=8,
+            "SectionTitle.TLabel",
+            background="#020617",
+            foreground="#f8fafc",
+            font=("Segoe UI Semibold", 15),
         )
-        self.style.map(
-            "Primary.TButton",
-            background=[("!disabled", "#2563eb"), ("pressed", "#1d4ed8")],
-            foreground=[("!disabled", "#f8fafc")],
-        )
+        self.style.configure("Surface.TFrame", background="#020617")
         self.style.configure(
-            "TFrame",
-            background="#050914",
-        )
-        self.style.configure(
-            "TLabel",
-            background="#050914",
-            foreground="#d1d5db",
+            "CardSurface.TFrame",
+            background="#0b1220",
+            relief=tk.FLAT,
+            borderwidth=0,
         )
         self.style.configure(
             "Card.TFrame",
@@ -159,6 +160,83 @@ class JugiAIApp(tk.Tk):
             "Card.TLabel",
             background="#0f172a",
             foreground="#e2e8f0",
+        )
+        self.style.configure(
+            "Attachment.TFrame",
+            background="#1e293b",
+            relief=tk.FLAT,
+            borderwidth=0,
+        )
+        self.style.configure(
+            "Attachment.TLabel",
+            background="#1e293b",
+            foreground="#f1f5f9",
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Accent.TButton",
+            font=("Segoe UI Semibold", 11),
+            padding=10,
+            background="#2563eb",
+            foreground="#f8fafc",
+            borderwidth=0,
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("pressed", "#1d4ed8"), ("active", "#1d4ed8"), ("disabled", "#1e3a8a")],
+            foreground=[("disabled", "#9ca3af")],
+        )
+        self.style.configure(
+            "Toolbar.TButton",
+            font=("Segoe UI", 10),
+            padding=8,
+            background="#0f172a",
+            foreground="#e2e8f0",
+            borderwidth=0,
+        )
+        self.style.map(
+            "Toolbar.TButton",
+            background=[("active", "#172554"), ("pressed", "#1e3a8a")],
+            foreground=[("disabled", "#64748b")],
+        )
+        self.style.configure(
+            "StatusBadgeIdle.TLabel",
+            background="#10b981",
+            foreground="#022c22",
+            font=("Segoe UI Semibold", 10),
+            padding=(12, 4),
+        )
+        self.style.configure(
+            "StatusBadgeBusy.TLabel",
+            background="#f97316",
+            foreground="#311303",
+            font=("Segoe UI Semibold", 10),
+            padding=(12, 4),
+        )
+        self.style.configure(
+            "MetricTitle.TLabel",
+            background="#0f172a",
+            foreground="#94a3b8",
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "MetricValue.TLabel",
+            background="#0f172a",
+            foreground="#f8fafc",
+            font=("Segoe UI Semibold", 16),
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground="#0f172a",
+            background="#0f172a",
+            foreground="#e2e8f0",
+            arrowcolor="#93c5fd",
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", "#0f172a")],
+            background=[("readonly", "#0f172a")],
+            foreground=[("readonly", "#e2e8f0")],
         )
 
         self._build_ui()
@@ -240,97 +318,142 @@ class JugiAIApp(tk.Tk):
             self.config_dict["active_profile"] = name
             self.save_config()
         self._sync_quick_controls()
+        if hasattr(self, "metric_vars"):
+            self._update_overview_metrics()
 
     def _build_ui(self) -> None:
         root = self
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(2, weight=1)
 
-        # Header
-        header = ttk.Frame(root, style="Header.TFrame", padding=(16, 12))
-        header.pack(side=tk.TOP, fill=tk.X)
+        self.typing_status_var = tk.StringVar(value="Valmis")
+        self.metric_vars = {
+            "profile": tk.StringVar(value=self.config_dict.get("active_profile", DEFAULT_PROFILE_NAME)),
+            "model": tk.StringVar(value=self._format_model_label()),
+            "messages": tk.StringVar(value="0"),
+            "last": tk.StringVar(value="–"),
+        }
 
-        title_box = ttk.Frame(header, style="Header.TFrame")
-        title_box.pack(side=tk.LEFT, padx=(0, 16))
+        header = ttk.Frame(root, style="Nav.TFrame", padding=(24, 20))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=1)
+        header.columnconfigure(2, weight=0)
 
-        title_lbl = ttk.Label(
-            title_box,
-            text="JugiAI",
-            style="Header.TLabel",
-            font=("Segoe UI", 18, "bold"),
-        )
-        title_lbl.pack(anchor="w")
-        subtitle_lbl = ttk.Label(
-            title_box,
-            text="AnomFIN × AnomTools",
-            style="Subtle.TLabel",
-        )
-        subtitle_lbl.pack(anchor="w")
+        brand_box = ttk.Frame(header, style="Nav.TFrame")
+        brand_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(brand_box, text="JugiAI Command Deck", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(
+            brand_box,
+            text="AnomFIN · Strateginen tekoälytyökalu",
+            style="NavSubtitle.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
 
-        status_box = ttk.Frame(header, style="Header.TFrame")
-        status_box.pack(side=tk.LEFT, padx=(0, 24))
+        status_box = ttk.Frame(header, style="Nav.TFrame")
+        status_box.grid(row=0, column=1, sticky="w", padx=(24, 0))
         self.ping_canvas = tk.Canvas(
             status_box,
-            width=14,
-            height=14,
+            width=16,
+            height=16,
             highlightthickness=0,
-            bg="#050914",
+            bg="#010b1a",
             bd=0,
         )
-        self.ping_canvas.pack(side=tk.LEFT, padx=(0, 6))
-        self.ping_indicator = self.ping_canvas.create_oval(2, 2, 12, 12, fill="#f59e0b", outline="")
+        self.ping_canvas.pack(side=tk.LEFT, padx=(0, 8))
+        self.ping_indicator = self.ping_canvas.create_oval(2, 2, 14, 14, fill="#f59e0b", outline="")
         self.ping_var = tk.StringVar(value="PING: -- ms")
-        ttk.Label(status_box, textvariable=self.ping_var, style="Subtle.TLabel").pack(side=tk.LEFT)
+        ttk.Label(status_box, textvariable=self.ping_var, style="NavSubtitle.TLabel").pack(side=tk.LEFT)
 
-        control_box = ttk.Frame(header, style="Header.TFrame")
-        control_box.pack(side=tk.RIGHT)
-
+        control_box = ttk.Frame(header, style="Nav.TFrame")
+        control_box.grid(row=0, column=2, sticky="e")
+        control_box.columnconfigure(1, weight=1)
         self.model_var_quick = tk.StringVar(value=self.config_dict.get("model", "gpt-4o-mini"))
-        ttk.Label(control_box, text="Kielimalli:", style="Subtle.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(control_box, text="Malli:", style="NavSubtitle.TLabel").grid(row=0, column=0, sticky="e")
         model_values = self._resolve_model_options()
         self.model_combo = ttk.Combobox(
             control_box,
             textvariable=self.model_var_quick,
             values=model_values,
             state="readonly",
-            width=18,
+            width=20,
         )
-        self.model_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self.model_combo.grid(row=0, column=1, sticky="ew", padx=(8, 0))
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_quick_change)
 
-        ttk.Button(control_box, text="Tyhjennä", command=self.clear_history).pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(control_box, text="⚙️", width=3, command=self.open_settings).pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(control_box, text="Profiilit", command=self.open_profiles).pack(side=tk.RIGHT, padx=(8, 0))
-
-        # Typing indicator label
-        self.typing_status_var = tk.StringVar(value="Valmis")
-        ttk.Label(root, textvariable=self.typing_status_var, style="Subtle.TLabel").pack(
-            side=tk.TOP, anchor="w", padx=20, pady=(0, 4)
+        buttons_bar = ttk.Frame(control_box, style="Nav.TFrame")
+        buttons_bar.grid(row=1, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons_bar, text="Profiilit", style="Toolbar.TButton", command=self.open_profiles).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(buttons_bar, text="Tyhjennä", style="Toolbar.TButton", command=self.clear_history).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(buttons_bar, text="Asetukset ⚙", style="Toolbar.TButton", command=self.open_settings).pack(
+            side=tk.LEFT
         )
 
+        overview = ttk.Frame(root, style="Surface.TFrame", padding=(24, 12))
+        overview.grid(row=1, column=0, sticky="ew")
+        for idx in range(4):
+            overview.columnconfigure(idx, weight=1)
 
-        # Chat area card 
-        chat_card = ttk.Frame(root, style="Card.TFrame", padding=16)
-        chat_card.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
+        metrics = [
+            ("Aktiivinen profiili", self.metric_vars["profile"]),
+            ("Mallimoottori", self.metric_vars["model"]),
+            ("Viestit", self.metric_vars["messages"]),
+            ("Viimeisin vastaus", self.metric_vars["last"]),
+        ]
+        for idx, (title, var) in enumerate(metrics):
+            card = tk.Frame(
+                overview,
+                bg="#0f172a",
+                highlightbackground="#1f2937",
+                highlightthickness=1,
+                bd=0,
+                padx=18,
+                pady=14,
+            )
+            card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 12, 0))
+            tk.Label(card, text=title, bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 10)).pack(anchor="w")
+            tk.Label(
+                card,
+                textvariable=var,
+                bg="#0f172a",
+                fg="#f8fafc",
+                font=("Segoe UI Semibold", 16),
+            ).pack(anchor="w", pady=(4, 0))
 
-        self.chat = ScrolledText(chat_card, wrap=tk.WORD, state=tk.DISABLED, relief=tk.FLAT, borderwidth=0)
-        self.chat.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        chat_wrapper = ttk.Frame(root, style="Surface.TFrame", padding=(24, 0))
+        chat_wrapper.grid(row=2, column=0, sticky="nsew")
+        chat_wrapper.rowconfigure(1, weight=1)
+        chat_wrapper.columnconfigure(0, weight=1)
 
-        # Chat area
-        chat_container = ttk.Frame(root)
-        chat_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
+        chat_header = ttk.Frame(chat_wrapper, style="Surface.TFrame")
+        chat_header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        ttk.Label(chat_header, text="Reaaliaikainen keskustelu", style="SectionTitle.TLabel").pack(side=tk.LEFT)
+        self.typing_badge = ttk.Label(chat_header, textvariable=self.typing_status_var, style="StatusBadgeIdle.TLabel")
+        self.typing_badge.pack(side=tk.RIGHT)
+
+        chat_card = ttk.Frame(chat_wrapper, style="CardSurface.TFrame", padding=0)
+        chat_card.grid(row=1, column=0, sticky="nsew")
+        chat_card.rowconfigure(0, weight=1)
+        chat_card.columnconfigure(0, weight=1)
+
+        text_container = ttk.Frame(chat_card, style="CardSurface.TFrame", padding=18)
+        text_container.grid(row=0, column=0, sticky="nsew")
+        text_container.rowconfigure(0, weight=1)
+        text_container.columnconfigure(0, weight=1)
 
         self.chat = tk.Text(
-            chat_container,
+            text_container,
             wrap=tk.WORD,
             state=tk.DISABLED,
             yscrollcommand=self._on_chat_scroll,
         )
-        self.chat.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.chat.grid(row=0, column=0, sticky="nsew")
 
-        self._chat_scrollbar = ttk.Scrollbar(
-            chat_container, orient=tk.VERTICAL, command=self.chat.yview
-        )
-        self._chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
+        self._chat_scrollbar = ttk.Scrollbar(text_container, orient=tk.VERTICAL, command=self.chat.yview)
+        self._chat_scrollbar.grid(row=0, column=1, sticky="ns", padx=(12, 0))
 
         try:
             fs = int(self.config_dict.get("font_size", 12))
@@ -339,73 +462,72 @@ class JugiAIApp(tk.Tk):
 
         self.chat.configure(
             bg="#0b1220",
-            fg="#e5e7eb",
-            insertbackground="#e5e7eb",
+            fg="#f8fafc",
+            insertbackground="#f8fafc",
             font=("Segoe UI", fs),
-            spacing1=4,
-            spacing2=2,
-            padx=8,
-            pady=8,
+            spacing1=6,
+            spacing2=3,
+            padx=12,
+            pady=12,
+            relief=tk.FLAT,
+            highlightthickness=0,
         )
-
-        self.chat.configure(bg="#0b1220", fg="#e5e7eb", insertbackground="#e5e7eb", font=("Segoe UI", fs))
         self.chat.bind("<Configure>", lambda event: self._position_watermark_overlay())
 
-        # Tagit rooleille
-        self.chat.tag_configure("role_user", foreground="#93c5fd")
-        self.chat.tag_configure("role_assistant", foreground="#34d399")
-        self.chat.tag_configure("error", foreground="#f87171")
-
-        # Input area
-        input_frame = ttk.Frame(root)
-        input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=8)
-
-
-        self.chat.tag_configure("role_user", foreground="#bfdbfe", font=("Segoe UI", fs))
-        self.chat.tag_configure("role_assistant", foreground="#6ee7b7", font=("Segoe UI", fs))
+        self.chat.tag_configure("role_user", foreground="#93c5fd", font=("Segoe UI", fs))
+        self.chat.tag_configure("role_assistant", foreground="#4ade80", font=("Segoe UI", fs))
         self.chat.tag_configure("error", foreground="#f87171", font=("Segoe UI", fs))
-        self.chat.tag_configure("header_user", foreground="#93c5fd", font=("Segoe UI", fs, "bold"))
-        self.chat.tag_configure("header_assistant", foreground="#5eead4", font=("Segoe UI", fs, "bold"))
-        self.chat.tag_configure("attachment", foreground="#facc15", font=("Segoe UI", fs - 1))
-        self.chat.tag_configure("separator_user", foreground="#1d4ed8")
-        self.chat.tag_configure("separator_assistant", foreground="#0f766e")
+        self.chat.tag_configure("header_user", foreground="#bfdbfe", font=("Segoe UI", fs, "bold"))
+        self.chat.tag_configure("header_assistant", foreground="#a7f3d0", font=("Segoe UI", fs, "bold"))
+        self.chat.tag_configure("attachment", foreground="#facc15", font=("Segoe UI", max(fs - 1, 8)))
+        self.chat.tag_configure("separator_user", foreground="#2563eb")
+        self.chat.tag_configure("separator_assistant", foreground="#0ea5e9")
 
-        # Input area card
-        input_card = ttk.Frame(root, style="Card.TFrame", padding=16)
-        input_card.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 16))
+        composer = ttk.Frame(root, style="Surface.TFrame", padding=(24, 20))
+        composer.grid(row=3, column=0, sticky="ew")
+        composer.columnconfigure(0, weight=1)
 
-        attachments_bar = ttk.Frame(input_card, style="Card.TFrame")
-        attachments_bar.pack(side=tk.TOP, fill=tk.X)
-        ttk.Button(attachments_bar, text="📎 Liitä tiedosto", command=self.add_attachment).pack(side=tk.LEFT)
-        self.attachments_container = ttk.Frame(attachments_bar, style="Card.TFrame")
-        self.attachments_container.pack(side=tk.LEFT, padx=(12, 0), fill=tk.X, expand=True)
+        attachments_bar = ttk.Frame(composer, style="Surface.TFrame")
+        attachments_bar.grid(row=0, column=0, sticky="ew")
+        attachments_bar.columnconfigure(1, weight=1)
+        ttk.Button(
+            attachments_bar,
+            text="📎 Liitä tiedosto",
+            style="Toolbar.TButton",
+            command=self.add_attachment,
+        ).grid(row=0, column=0, sticky="w")
+        self.attachments_container = ttk.Frame(attachments_bar, style="Surface.TFrame")
+        self.attachments_container.grid(row=0, column=1, sticky="ew", padx=(16, 0))
 
-        self.input = tk.Text(input_card, height=4, wrap=tk.WORD, relief=tk.FLAT)
-        self.input.pack(side=tk.TOP, fill=tk.X, expand=True, pady=(12, 12))
+        ttk.Separator(composer, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(12, 12))
+
+        self.input = tk.Text(composer, height=5, wrap=tk.WORD, relief=tk.FLAT)
+        self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
             bg="#111827",
-            fg="#e5e7eb",
-            insertbackground="#e5e7eb",
+            fg="#f8fafc",
+            insertbackground="#f8fafc",
             font=("Segoe UI", fs),
-            spacing1=4,
-            spacing2=2,
-            padx=10,
-            pady=10,
+            spacing1=6,
+            spacing2=3,
+            padx=14,
+            pady=14,
             highlightthickness=1,
             highlightcolor="#1f2937",
             highlightbackground="#1f2937",
         )
 
-        action_row = ttk.Frame(input_card, style="Card.TFrame")
-        action_row.pack(side=tk.BOTTOM, fill=tk.X)
+        action_row = ttk.Frame(composer, style="Surface.TFrame")
+        action_row.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(action_row, text="Vaihto+Enter = rivinvaihto", style="Subtle.TLabel").pack(side=tk.LEFT)
-        self.send_btn = ttk.Button(action_row, text="Lähetä ✈️", style="Primary.TButton", command=self.on_send)
+        self.send_btn = ttk.Button(action_row, text="Lähetä ✈️", style="Accent.TButton", command=self.on_send)
         self.send_btn.pack(side=tk.RIGHT)
 
-        # Enter = lähetys, Shift+Enter = rivinvaihto
         self.input.bind("<Shift-Return>", self._newline)
         self.input.bind("<Return>", self._enter_send)
+
         self._refresh_attachment_chips()
+        self._update_overview_metrics()
 
     def _resolve_model_options(self) -> List[str]:
         options = self.config_dict.get("model_options")
@@ -423,10 +545,36 @@ class JugiAIApp(tk.Tk):
         if active in profiles and isinstance(profiles[active], dict):
             profiles[active]["model"] = value
         self.save_config()
+        self._update_overview_metrics()
 
     def _sync_quick_controls(self) -> None:
         if hasattr(self, "model_var_quick"):
             self.model_var_quick.set(self.config_dict.get("model", "gpt-4o-mini"))
+
+    def _format_model_label(self) -> str:
+        backend = (self.config_dict.get("backend") or "openai").strip().lower()
+        if backend == "openai":
+            backend_label = "OpenAI"
+        elif backend == "local":
+            backend_label = "Paikallinen"
+        else:
+            backend_label = backend.title()
+        model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
+        return f"{backend_label} · {model}"
+
+    def _update_overview_metrics(self) -> None:
+        if not hasattr(self, "metric_vars"):
+            return
+        self.metric_vars["profile"].set(self.config_dict.get("active_profile", DEFAULT_PROFILE_NAME))
+        self.metric_vars["model"].set(self._format_model_label())
+        self.metric_vars["messages"].set(str(len(self.history)))
+        last_ts = "–"
+        for entry in reversed(self.history):
+            ts = entry.get("timestamp")
+            if ts:
+                last_ts = ts
+                break
+        self.metric_vars["last"].set(last_ts)
 
     def _refresh_attachment_chips(self) -> None:
         for child in list(self.attachments_container.winfo_children()):
@@ -439,16 +587,17 @@ class JugiAIApp(tk.Tk):
             ).pack(side=tk.LEFT)
             return
         for idx, att in enumerate(self.pending_attachments):
-            chip = ttk.Frame(self.attachments_container, style="Card.TFrame")
+            chip = ttk.Frame(self.attachments_container, style="Attachment.TFrame", padding=(10, 4))
             chip.pack(side=tk.LEFT, padx=(0, 8))
             name = att.get("name", "liite")
-            ttk.Label(chip, text=f"📎 {name}", style="Card.TLabel").pack(side=tk.LEFT)
+            ttk.Label(chip, text=f"📎 {name}", style="Attachment.TLabel").pack(side=tk.LEFT)
             ttk.Button(
                 chip,
                 text="✕",
+                style="Toolbar.TButton",
                 width=2,
                 command=lambda i=idx: self.remove_attachment(i),
-            ).pack(side=tk.LEFT, padx=(4, 0))
+            ).pack(side=tk.LEFT, padx=(8, 0))
 
     def add_attachment(self) -> None:
         paths = filedialog.askopenfilenames(title="Valitse liitteet")
@@ -642,6 +791,7 @@ class JugiAIApp(tk.Tk):
         self.chat.insert(tk.END, "\n")
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
+        self._update_overview_metrics()
 
     def append_error(self, content: str) -> None:
         self.chat.configure(state=tk.NORMAL)
@@ -677,6 +827,7 @@ class JugiAIApp(tk.Tk):
         }
         self.history.append(history_entry)
         self.save_history()
+        self._update_overview_metrics()
 
         self.pending_attachments = []
         self._refresh_attachment_chips()
@@ -688,10 +839,14 @@ class JugiAIApp(tk.Tk):
 
     def set_busy(self, busy: bool) -> None:
         if busy:
-            self.typing_status_var.set("JugiAI työskentelee…")
+            self.typing_status_var.set("Työstetään pyyntöä…")
+            if hasattr(self, "typing_badge"):
+                self.typing_badge.configure(style="StatusBadgeBusy.TLabel")
             self.send_btn.configure(state=tk.DISABLED)
         else:
             self.typing_status_var.set("Valmis")
+            if hasattr(self, "typing_badge"):
+                self.typing_badge.configure(style="StatusBadgeIdle.TLabel")
             self.send_btn.configure(state=tk.NORMAL)
 
     # --- Model call ---
@@ -724,6 +879,7 @@ class JugiAIApp(tk.Tk):
         self.history.append(history_entry)
         self.after(0, lambda text=final_text: self.finalize_assistant_stream(text))
         self.after(0, self.save_history)
+        self.after(0, self._update_overview_metrics)
         self.after(0, lambda: self.set_busy(False))
         self.current_stream_timestamp = None
 
@@ -911,6 +1067,7 @@ class JugiAIApp(tk.Tk):
                     )
             except Exception:
                 self.history = []
+        self._update_overview_metrics()
 
     def save_history(self) -> None:
         try:
@@ -928,6 +1085,7 @@ class JugiAIApp(tk.Tk):
         self.chat.configure(state=tk.DISABLED)
         self.save_history()
         self._insert_watermark_if_needed()
+        self._update_overview_metrics()
 
     def open_profiles(self) -> None:
         profiles = self.config_dict.get("profiles", {})
@@ -1057,6 +1215,7 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["active_profile"] = new_name
             self.config_dict["profiles"] = profiles
             self.save_config()
+            self._update_overview_metrics()
             if show_info:
                 messagebox.showinfo("Tallennettu", f"Profiili '{new_name}' tallennettiin.")
             refresh_list(new_name)
@@ -1100,6 +1259,7 @@ class JugiAIApp(tk.Tk):
             }
             self.config_dict["profiles"] = profiles
             self.save_config()
+            self._update_overview_metrics()
             refresh_list(name)
 
         def delete_profile() -> None:
@@ -1120,6 +1280,7 @@ class JugiAIApp(tk.Tk):
                 self._apply_profile(fallback, persist=True)
             else:
                 self.save_config()
+                self._update_overview_metrics()
             refresh_list(next(iter(profiles.keys()), None))
 
         btns = ttk.Frame(dlg, padding=12)
@@ -1354,6 +1515,7 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["font_size"] = 12
             self.save_config()
             self._sync_quick_controls()
+            self._update_overview_metrics()
             self._apply_icon_from_config()
             self._load_watermark_image()
             self._insert_watermark_if_needed()

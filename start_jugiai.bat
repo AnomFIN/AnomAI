@@ -4,6 +4,19 @@ set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%"
 echo Käynnistetään JugiAI...
 
+set "VENV_PYTHONW=%SCRIPT_DIR%venv\Scripts\pythonw.exe"
+set "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
+
+if exist "%VENV_PYTHONW%" (
+  "%VENV_PYTHONW%" "%SCRIPT_DIR%jugiai.py"
+  goto :done
+)
+
+if exist "%VENV_PYTHON%" (
+  "%VENV_PYTHON%" "%SCRIPT_DIR%jugiai.py"
+  goto :done
+)
+
 REM Yritä ensin pythonw (ei konsoli-ikkunaa)
 where pythonw >nul 2>&1
 if %ERRORLEVEL%==0 (
