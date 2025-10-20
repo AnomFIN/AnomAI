@@ -236,10 +236,9 @@ setlocal DisableDelayedExpansion
     echo     history_path.write_text("[]\n", encoding="utf-8")
     echo print(f"Konfiguraatio tallennettu: {config_path}")
 ) >"%CONFIG_WRITER%"
-endlocal
-
 call "%ACTIVE_PYTHON%" "%CONFIG_WRITER%"
 set "CFG_ERROR=%ERRORLEVEL%"
+endlocal & set "CFG_ERROR=%CFG_ERROR%"
 del "%CONFIG_WRITER%" >nul 2>&1
 if %CFG_ERROR% NEQ 0 (
     echo Konfiguraation kirjoitus epäonnistui.
@@ -380,7 +379,6 @@ exit /b 0
 :python_version_check_active
 set "PYTHON_EXE=%ACTIVE_PYTHON%"
 call :python_version_check
-set "PYTHON_EXE=%ACTIVE_PYTHON%"
 exit /b 0
 
 :install_llama
@@ -444,6 +442,7 @@ echo.
 echo === !RUN_DESC! ===
 call "%RUN_EXE%" %RUN_ARGS%
 set "ERR=%ERRORLEVEL%"
+rem On success, always return 0; on failure, preserve the error code (see exit handling below).
 if !ERR! EQU 0 exit /b 0
 echo.
 echo !RUN_DESC! epäonnistui (virhekoodi !ERR!).
