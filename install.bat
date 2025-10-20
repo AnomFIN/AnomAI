@@ -15,6 +15,15 @@ echo.
 echo Tämä ohjattu toiminto varmistaa, että JugiAI on valmis toimintaan Windows-ympäristössä.
 echo.
 
+rem Check for non-interactive mode
+set "NONINTERACTIVE="
+if /I "%BUILD_NONINTERACTIVE%"=="1" set "NONINTERACTIVE=1"
+if /I "%1"=="--noninteractive" set "NONINTERACTIVE=1"
+if defined NONINTERACTIVE (
+    echo [Non-interactive mode enabled - using defaults]
+    echo.
+)
+
 set "PYTHON_EXE="
 set "PYTHON_SOURCE="
 set "ACTIVE_PYTHON="
@@ -31,6 +40,11 @@ if defined PYTHON_EXE goto :python_found
 
 echo Python 3 -tulkkia ei löytynyt. Asenna uusin versio osoitteesta:
 echo https://www.python.org/downloads/windows/
+if defined NONINTERACTIVE (
+    echo [Error] Python 3 not found in non-interactive mode
+    set "BUILD_STATUS=FAIL"
+    goto :summary
+)
 pause
 goto :cleanup
 
@@ -39,6 +53,7 @@ echo Löydetty Python: %PYTHON_EXE%
 
 :confirm_python
 set "CUSTOM_PY="
+if defined NONINTERACTIVE goto :skip_custom_python
 set /p CUSTOM_PY=Anna halutessasi toinen Python 3 -tulkki (Enter = käytä löydettyä): 
 if defined CUSTOM_PY (
     if exist "%CUSTOM_PY%" (
@@ -49,22 +64,50 @@ if defined CUSTOM_PY (
     )
 )
 
+:skip_custom_python
 call :python_version_check
-if errorlevel 1 goto :confirm_python
+if errorlevel 1 (
+    if defined NONINTERACTIVE (
+        echo [Error] Python version check failed in non-interactive mode
+        set "BUILD_STATUS=FAIL"
+        goto :summary
+    )
+    goto :confirm_python
+)
 
 set "ACTIVE_PYTHON=%PYTHON_EXE%"
 echo Käytetään Python-tulkkia: %ACTIVE_PYTHON%
 
 echo.
-set "VENV_DIR=%SCRIPT_DIR%venv"
+rem Use .venv_build for builds to avoid interfering with developer .venv
+set "VENV_DIR=%SCRIPT_DIR%.venv_build"
 set "CREATE_VENV=K"
-set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö venv-kansioon? [K/E] (oletus K): 
+if defined NONINTERACTIVE goto :create_venv_auto
+set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö .venv_build-kansioon? [K/E] (oletus K): 
 if /I "%CREATE_VENV%"=="E" goto :skip_venv
 
-echo Luodaan virtuaaliympäristö...
+:create_venv_auto
+if exist "%VENV_DIR%" (
+    echo Käytetään olemassa olevaa virtuaaliympäristöä: %VENV_DIR%
+    set "ACTIVE_PYTHON=%VENV_DIR%\Scripts\python.exe"
+    if not exist "%ACTIVE_PYTHON%" set "ACTIVE_PYTHON=%VENV_DIR%\Scripts\pythonw.exe"
+    if not exist "%ACTIVE_PYTHON%" (
+        echo Virhe: Virtuaaliympäristön Python-tulkkia ei löytynyt. Luodaan uudelleen.
+        rmdir /s /q "%VENV_DIR%" 2>nul
+        goto :create_new_venv
+    )
+    call :python_version_check_active
+    goto :skip_venv
+)
+
+:create_new_venv
+echo Luodaan virtuaaliympäristö .venv_build...
 call "%PYTHON_EXE%" -m venv "%VENV_DIR%"
 if errorlevel 1 (
     echo Virtuaaliympäristön luonti epäonnistui. Jatketaan järjestelmän Pythonilla.
+    if defined NONINTERACTIVE (
+        echo [Warning] Failed to create virtual environment in non-interactive mode
+    )
     goto :skip_venv
 )
 set "ACTIVE_PYTHON=%VENV_DIR%\Scripts\python.exe"
@@ -78,10 +121,20 @@ set "PY_MINOR_DISPLAY=%PY_MINOR%"
 echo Valittu Python-versio: %PY_MINOR_DISPLAY%
 
 echo.
+echo Päivitetään pip...
 call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pip" "Pipin päivitys" 1
+if errorlevel 1 (
+    echo Huom: pip-päivitys epäonnistui, yritetään ensurepip
+    call "%ACTIVE_PYTHON%" -m ensurepip --upgrade >nul 2>&1
+    if errorlevel 1 (
+        echo [Warning] pip/ensurepip update failed - continuing with existing pip
+    )
+)
 
 set "INSTALL_LLAMA=E"
+if defined NONINTERACTIVE goto :skip_llama_prompt
 set /p INSTALL_LLAMA=Asennetaanko paikallisen mallin tuki (llama-cpp-python)? [K/E] (valinnainen): 
+:skip_llama_prompt
 if /I "%INSTALL_LLAMA%"=="K" (
     call :install_llama
 )
@@ -90,45 +143,74 @@ echo.
 echo *** JugiAI:n konfigurointi ***
 :ask_api
 set "OPENAI_KEY="
+if defined NONINTERACTIVE (
+    rem In non-interactive mode, check for existing config or use placeholder
+    if exist "%SCRIPT_DIR%config.json" (
+        echo [Non-interactive] Using existing config.json
+        goto :skip_config
+    )
+    echo [Non-interactive] Using placeholder API key - update config.json before running
+    set "OPENAI_KEY=sk-placeholder-update-in-config-json"
+    goto :config_defaults
+)
 set /p OPENAI_KEY=Syötä OpenAI API -avain (pakollinen): 
 if not defined OPENAI_KEY (
     echo API-avain tarvitaan jatkaaksesi.
     goto :ask_api
 )
 
+:config_defaults
 set "MODEL="
-set /p MODEL=Ensisijainen malli [gpt-4o-mini]: 
+if not defined NONINTERACTIVE (
+    set /p MODEL=Ensisijainen malli [gpt-4o-mini]: 
+)
 if not defined MODEL set "MODEL=gpt-4o-mini"
 
 set "SYSTEM_PROMPT="
-echo Anna halutessasi mukautettu system-prompt (Enter = käytä oletusta):
-set /p SYSTEM_PROMPT=: 
+if not defined NONINTERACTIVE (
+    echo Anna halutessasi mukautettu system-prompt (Enter = käytä oletusta):
+    set /p SYSTEM_PROMPT=: 
+)
 
 set "TEMPERATURE="
-set /p TEMPERATURE=Temperature (0-2) [0.7]: 
+if not defined NONINTERACTIVE (
+    set /p TEMPERATURE=Temperature (0-2) [0.7]: 
+)
 if not defined TEMPERATURE set "TEMPERATURE=0.7"
 
 set "TOP_P="
-set /p TOP_P=top_p (0-1) [1.0]: 
+if not defined NONINTERACTIVE (
+    set /p TOP_P=top_p (0-1) [1.0]: 
+)
 if not defined TOP_P set "TOP_P=1.0"
 
 set "MAX_TOKENS="
-set /p MAX_TOKENS=max_tokens (Enter = ei rajaa): 
+if not defined NONINTERACTIVE (
+    set /p MAX_TOKENS=max_tokens (Enter = ei rajaa): 
+)
 
 set "PRESENCE="
-set /p PRESENCE=presence_penalty (-2–2) [0.0]: 
+if not defined NONINTERACTIVE (
+    set /p PRESENCE=presence_penalty (-2–2) [0.0]: 
+)
 if not defined PRESENCE set "PRESENCE=0.0"
 
 set "FREQUENCY="
-set /p FREQUENCY=frequency_penalty (-2–2) [0.0]: 
+if not defined NONINTERACTIVE (
+    set /p FREQUENCY=frequency_penalty (-2–2) [0.0]: 
+)
 if not defined FREQUENCY set "FREQUENCY=0.0"
 
 set "BACKEND="
-set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai): 
+if not defined NONINTERACTIVE (
+    set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai): 
+)
 if not defined BACKEND set "BACKEND=openai"
 
 set "BG_CHOICE="
-set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K): 
+if not defined NONINTERACTIVE (
+    set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K): 
+)
 if /I "%BG_CHOICE%"=="E" (
     set "BG_ENABLED=0"
 ) else (
@@ -136,14 +218,20 @@ if /I "%BG_CHOICE%"=="E" (
 )
 
 set "BG_PATH="
-set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä): 
+if not defined NONINTERACTIVE (
+    set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä): 
+)
 
 set "BG_OPACITY="
-set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]: 
+if not defined NONINTERACTIVE (
+    set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]: 
+)
 if not defined BG_OPACITY set "BG_OPACITY=0.18"
 
 set "FONT_SIZE="
-set /p FONT_SIZE=Chat-tekstin pistekoko [12]: 
+if not defined NONINTERACTIVE (
+    set /p FONT_SIZE=Chat-tekstin pistekoko [12]: 
+)
 if not defined FONT_SIZE set "FONT_SIZE=12"
 
 set "ANOMAI_API_KEY=%OPENAI_KEY%"
@@ -246,6 +334,7 @@ if %CFG_ERROR% NEQ 0 (
     goto :summary
 )
 
+:skip_config
 echo.
 echo *** Luodaan AnomAI.exe ***
 call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pyinstaller pillow pyinstaller-hooks-contrib" "PyInstaller-riippuvuuksien asennus" 0
@@ -277,8 +366,18 @@ if exist logo.png (
 
 set "PYINSTALLER_ARGS=-m pyinstaller --noconsole --name AnomAI"
 if defined ICON_PATH set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --icon ""%ICON_PATH%"""
+rem Add data files if they exist
 if exist README.MD set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""README.MD;."""
 if exist logo.png set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""logo.png;."""
+if exist logo.ico set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""logo.ico;."""
+if exist config2.json set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""config2.json;."""
+if exist history.json set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""history.json;."""
+if exist requirements.txt set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""requirements.txt;."""
+rem Add directories if they exist (Windows syntax: source;dest)
+if exist wallps set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""wallps;wallps"""
+if exist recordings set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""recordings;recordings"""
+if exist AnomFIN set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""AnomFIN;AnomFIN"""
+if exist apple set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""apple;apple"""
 if defined LLAMA_AVAILABLE set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --collect-all llama_cpp"
 set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% jugiai.py"
 
@@ -345,7 +444,7 @@ echo.
 echo Pidä API-avaimesi tallessa ja nauti JugiAI:n tehostetusta käyttöliittymästä.
 echo ======================================================
 echo.
-pause
+if not defined NONINTERACTIVE pause
 
 goto :cleanup
 
@@ -446,6 +545,16 @@ rem On success, always return 0; on failure, preserve the error code (see exit h
 if !ERR! EQU 0 exit /b 0
 echo.
 echo !RUN_DESC! epäonnistui (virhekoodi !ERR!).
+if defined NONINTERACTIVE (
+    echo [Non-interactive mode] Build step failed: !RUN_DESC!
+    if "!RUN_OPTIONAL!"=="1" (
+        echo [Non-interactive] Skipping optional step: !RUN_DESC!
+        exit /b 0
+    ) else (
+        echo [Non-interactive] Required step failed, aborting
+        exit /b !ERR!
+    )
+)
 set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K): 
 if /I "!RETRY!"=="E" (
     if "!RUN_OPTIONAL!"=="1" (
