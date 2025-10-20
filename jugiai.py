@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import tkinter as tk
+import traceback
 from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -251,6 +252,12 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+
+    def _safe_log(self, *args, **kwargs):
+        try:
+            print("[JugiAI]", *args, **kwargs)
+        except Exception:
+            pass
 
     # --- UI ---
     def _ensure_profiles(self) -> None:
@@ -1561,27 +1568,67 @@ class JugiAIApp(tk.Tk):
         if respect_visibility and not self.config_dict.get("show_background", True):
             self._remove_watermark_overlay()
             return
+        
+        try:
+            from PIL import Image
+            pil_available = True
+        except Exception:
+            pil_available = False
+            try:
+                self._safe_log("Pillow (PIL) is not installed. Watermark disabled. Install Pillow to enable watermark features.")
+            except Exception:
+                print("[JugiAI] Pillow (PIL) missing; watermark disabled.")
+        
         path = self._resolve_default_logo()
         if not path:
             self._remove_watermark_overlay()
+            if pil_available:
+                try:
+                    self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+                except Exception:
+                    pass
             return
+        
+        if not os.path.isfile(path):
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+            except Exception:
+                pass
+            return
+        
         try:
             raw_img = tk.PhotoImage(file=path)
         except Exception:
             self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
             return
-        subs = int(self.config_dict.get("background_subsample", 2))
-        subs = max(1, min(8, subs))
+        
         try:
-            scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            subs = int(self.config_dict.get("background_subsample", 2))
+            subs = max(1, min(8, subs))
+            try:
+                scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            except Exception:
+                scaled = raw_img
+            opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            processed = self._apply_watermark_opacity(scaled, opacity_val)
+            self._wm_raw_img = raw_img
+            self._wm_scaled_img = scaled
+            self._wm_img = processed
         except Exception:
-            scaled = raw_img
-        opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
-        opacity_val = max(0.0, min(1.0, opacity_val))
-        processed = self._apply_watermark_opacity(scaled, opacity_val)
-        self._wm_raw_img = raw_img
-        self._wm_scaled_img = scaled
-        self._wm_img = processed
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
+            return
 
     def _insert_watermark_if_needed(self) -> None:
         if not self._wm_img:
@@ -1676,57 +1723,122 @@ class JugiAIApp(tk.Tk):
         self._ensure_watermark_overlay()
         self._position_watermark_overlay()
 
-    def _apply_watermark_opacity(self, img: tk.PhotoImage, opacity: float) -> tk.PhotoImage:
-        opacity = max(0.0, min(1.0, float(opacity)))
+    def _apply_watermark_opacity(self, image, opacity):
         try:
-            width = img.width()
-            height = img.height()
+            from PIL import Image
         except Exception:
-            return img
-        if opacity >= 0.999:
+            # PIL not available - fall back to tk.PhotoImage processing
+            if not isinstance(image, tk.PhotoImage):
+                return image
+            if opacity is None:
+                return image
             try:
-                return img.copy()
+                opacity_val = float(opacity)
             except Exception:
-                return img
-        bg_color = "#0b1220"
-        try:
-            bg_color = self.chat.cget("bg")
-        except Exception:
-            pass
-        bg_rgb = self._hex_to_rgb(bg_color)
-        result = tk.PhotoImage(width=width, height=height)
-        for y in range(height):
-            row_colors = []
-            for x in range(width):
                 try:
-                    pixel = img.get(x, y)
+                    opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
                 except Exception:
-                    pixel = bg_color
-                if not pixel:
-                    blended_rgb = bg_rgb
-                else:
-                    rgb = self._hex_to_rgb(pixel)
-                    blended_rgb = (
-                        int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
-                        int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
-                        int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
-                    )
-                row_colors.append(self._rgb_to_hex(blended_rgb))
-            result.put("{" + " ".join(row_colors) + "}", to=(0, y))
-        return result
-
-    def _hex_to_rgb(self, value: str) -> tuple[int, int, int]:
-        value = (value or "").strip()
-        if value.startswith("#") and len(value) == 7:
+                    opacity_val = 1.0
+            if opacity_val > 1.0:
+                opacity_val = max(0.0, min(100.0, opacity_val)) / 100.0
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            
             try:
-                return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))
+                width = image.width()
+                height = image.height()
+            except Exception:
+                return image
+            if opacity_val >= 0.999:
+                try:
+                    return image.copy()
+                except Exception:
+                    return image
+            bg_color = "#0b1220"
+            try:
+                bg_color = self.chat.cget("bg")
             except Exception:
                 pass
+            try:
+                bg_rgb = self._hex_to_rgb(bg_color)
+            except Exception:
+                bg_rgb = (11, 18, 32)
+            result = tk.PhotoImage(width=width, height=height)
+            for y in range(height):
+                row_colors = []
+                for x in range(width):
+                    try:
+                        pixel = image.get(x, y)
+                    except Exception:
+                        pixel = bg_color
+                    if not pixel:
+                        blended_rgb = bg_rgb
+                    else:
+                        try:
+                            rgb = self._hex_to_rgb(pixel)
+                        except Exception:
+                            rgb = bg_rgb
+                        blended_rgb = (
+                            int(rgb[0] * opacity_val + bg_rgb[0] * (1.0 - opacity_val)),
+                            int(rgb[1] * opacity_val + bg_rgb[1] * (1.0 - opacity_val)),
+                            int(rgb[2] * opacity_val + bg_rgb[2] * (1.0 - opacity_val)),
+                        )
+                    row_colors.append(self._rgb_to_hex(blended_rgb))
+                result.put("{" + " ".join(row_colors) + "}", to=(0, y))
+            return result
+        
+        # PIL is available - use it for better processing
+        if opacity is None:
+            return image
         try:
-            r, g, b = self.winfo_rgb(value)
-            return r // 256, g // 256, b // 256
+            opacity_val = float(opacity)
         except Exception:
-            return 11, 18, 32
+            try:
+                opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
+            except Exception:
+                opacity_val = 1.0
+        if opacity_val > 1.0:
+            opacity_val = max(0.0, min(100.0, opacity_val)) / 100.0
+        opacity_val = max(0.0, min(1.0, opacity_val))
+        if image.mode != 'RGBA':
+            image = image.convert('RGBA')
+        try:
+            r, g, b, a = image.split()
+            a = a.point(lambda v: int(v * opacity_val))
+            return Image.merge('RGBA', (r, g, b, a))
+        except Exception:
+            try:
+                from PIL import Image
+                alpha = Image.new('L', image.size, int(255 * opacity_val))
+                out = image.convert('RGBA')
+                out.putalpha(alpha)
+                return out
+            except Exception:
+                return image.convert('RGBA')
+
+    def _hex_to_rgb(self, value):
+        if isinstance(value, (tuple, list)):
+            if len(value) < 3:
+                raise ValueError(f"Color tuple must have at least 3 elements, got: {value!r}")
+            try:
+                return (int(value[0]), int(value[1]), int(value[2]))
+            except Exception:
+                raise ValueError(f"Invalid numeric color components: {value!r}")
+        if value is None:
+            raise ValueError("Color value is None")
+        s = str(value).strip()
+        if s.startswith('#'):
+            s = s[1:]
+        if len(s) == 3:
+            s = ''.join(ch * 2 for ch in s)
+        if len(s) != 6:
+            raise ValueError(f"Invalid hex color length: {value!r}")
+        try:
+            r = int(s[0:2], 16)
+            g = int(s[2:4], 16)
+            b = int(s[4:6], 16)
+        except Exception:
+            raise ValueError(f"Invalid hex color value: {value!r}")
+        return (r, g, b)
 
     def _rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
         r, g, b = rgb
