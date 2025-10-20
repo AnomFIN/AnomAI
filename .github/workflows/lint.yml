@@ -1,0 +1,48 @@
+name: lint
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  windows-lint:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tarkista Windows-skriptien koodaukset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+          Get-ChildItem -Path $PWD -Recurse -Include *.bat,*.cmd |
+            Where-Object {
+              $_.FullName -notmatch '\\node_modules\\' -and
+              $_.FullName -notmatch '\\.git\\' -and
+              $_.FullName -notmatch '\\venv\\' -and
+              $_.FullName -notmatch '\\__pycache__\\'
+            } | ForEach-Object {
+            $bytes = [IO.File]::ReadAllBytes($_.FullName)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+              throw "BOM havaittu tiedostossa $($_.FullName)"
+            }
+            $null = $utf8.GetString($bytes)
+            for ($i = 0; $i -lt $bytes.Length; $i++) {
+              if ($bytes[$i] -eq 0x0A -and ($i -eq 0 -or $bytes[$i - 1] -ne 0x0D)) {
+                throw "LF ilman CR-merkkiä tiedostossa $($_.FullName)"
+              }
+            }
+          }
+
+      - name: PyInstaller -versio
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          pyinstaller --version
+
+      - name: Tulosta Python-versio
+        shell: pwsh
+        run: python -c "import sys; print(sys.version)"

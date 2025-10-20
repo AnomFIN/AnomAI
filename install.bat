@@ -9,18 +9,18 @@ title AnomFIN · JugiAI Asennus
 color 0b
 
 echo ======================================================
-echo    AnomFIN · JugiAI - ^Älykkyyden käyttöönotto-ohjain
+echo    AnomFIN · JugiAI - Älykkyyden käyttöönotto-ohjain
 echo ======================================================
 echo.
-echo Tämä ohjattu toiminto varmistaa, että JugiAI on valmis^
-echo toimintaan Windows-ympäristössä.
+echo Tämä ohjattu toiminto varmistaa, että JugiAI on valmis toimintaan Windows-ympäristössä.
 echo.
 
 set "PYTHON_EXE="
-set "PYTHON_FRIENDLY="
+set "PYTHON_SOURCE="
 set "ACTIVE_PYTHON="
 set "BUILD_STATUS=OK"
 set "LLAMA_INSTALLED="
+set "PY_MINOR="
 
 call :resolvePython "py -3"
 if defined PYTHON_EXE goto :python_found
@@ -39,36 +39,30 @@ echo Löydetty Python: %PYTHON_EXE%
 
 :confirm_python
 set "CUSTOM_PY="
-set /p CUSTOM_PY=Anna halutessasi toinen Python 3 -tulkki (Enter = käytä löydettyä):
+set /p CUSTOM_PY=Anna halutessasi toinen Python 3 -tulkki (Enter = käytä löydettyä): 
 if defined CUSTOM_PY (
     if exist "%CUSTOM_PY%" (
         set "PYTHON_EXE=%CUSTOM_PY%"
-        goto :python_version_check
     ) else (
         echo Polkua "%CUSTOM_PY%" ei löytynyt. Yritä uudelleen.
         goto :confirm_python
     )
 )
 
-goto :python_version_check
+call :python_version_check
+if errorlevel 1 goto :confirm_python
 
-:python_version_check
-"%PYTHON_EXE%" -c "import sys; assert sys.version_info >= (3, 9)" >nul 2>&1
-if errorlevel 1 (
-    echo Python-version on oltava 3.9 tai uudempi.
-    goto :confirm_python
-)
-
-echo Käytetään Python-tulkkia: %PYTHON_EXE%
 set "ACTIVE_PYTHON=%PYTHON_EXE%"
+echo Käytetään Python-tulkkia: %ACTIVE_PYTHON%
 
+echo.
 set "VENV_DIR=%SCRIPT_DIR%venv"
 set "CREATE_VENV=K"
-set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö venv-kansioon? [K/E] (oletus K):
+set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö venv-kansioon? [K/E] (oletus K): 
 if /I "%CREATE_VENV%"=="E" goto :skip_venv
 
 echo Luodaan virtuaaliympäristö...
-"%PYTHON_EXE%" -m venv "%VENV_DIR%"
+call "%PYTHON_EXE%" -m venv "%VENV_DIR%"
 if errorlevel 1 (
     echo Virtuaaliympäristön luonti epäonnistui. Jatketaan järjestelmän Pythonilla.
     goto :skip_venv
@@ -77,67 +71,64 @@ set "ACTIVE_PYTHON=%VENV_DIR%\Scripts\python.exe"
 if not exist "%ACTIVE_PYTHON%" set "ACTIVE_PYTHON=%VENV_DIR%\Scripts\pythonw.exe"
 if not exist "%ACTIVE_PYTHON%" set "ACTIVE_PYTHON=%PYTHON_EXE%"
 echo Virtuaaliympäristö valmis: %VENV_DIR%
+call :python_version_check_active
 
 :skip_venv
+set "PY_MINOR_DISPLAY=%PY_MINOR%"
+echo Valittu Python-versio: %PY_MINOR_DISPLAY%
 
 echo.
-call :run_with_retry "\"%ACTIVE_PYTHON%\" -m pip install --upgrade pip" "Pipin päivitys" 1
+call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pip" "Pipin päivitys" 1
 
-echo.
 set "INSTALL_LLAMA=E"
-set /p INSTALL_LLAMA=Asennetaanko paikallisen mallin tuki (llama-cpp-python)? [K/E] (valinnainen):
+set /p INSTALL_LLAMA=Asennetaanko paikallisen mallin tuki (llama-cpp-python)? [K/E] (valinnainen): 
 if /I "%INSTALL_LLAMA%"=="K" (
-    call :run_with_retry "\"%ACTIVE_PYTHON%\" -m pip install --upgrade --prefer-binary llama-cpp-python" "llama-cpp-pythonin asennus" 0
-    if errorlevel 1 (
-        echo Huom: paikallisen mallin tuki ei ole käytettävissä ennen kuin asennus onnistuu.
-    ) else (
-        set "LLAMA_INSTALLED=1"
-    )
+    call :install_llama
 )
 
 echo.
 echo *** JugiAI:n konfigurointi ***
 :ask_api
 set "OPENAI_KEY="
-set /p OPENAI_KEY=Syötä OpenAI API -avain (pakollinen):
+set /p OPENAI_KEY=Syötä OpenAI API -avain (pakollinen): 
 if not defined OPENAI_KEY (
     echo API-avain tarvitaan jatkaaksesi.
     goto :ask_api
 )
 
 set "MODEL="
-set /p MODEL=Ensisijainen malli [gpt-4o-mini]:
+set /p MODEL=Ensisijainen malli [gpt-4o-mini]: 
 if not defined MODEL set "MODEL=gpt-4o-mini"
 
 set "SYSTEM_PROMPT="
 echo Anna halutessasi mukautettu system-prompt (Enter = käytä oletusta):
-set /p SYSTEM_PROMPT=:
+set /p SYSTEM_PROMPT=: 
 
 set "TEMPERATURE="
-set /p TEMPERATURE=Temperature (0-2) [0.7]:
+set /p TEMPERATURE=Temperature (0-2) [0.7]: 
 if not defined TEMPERATURE set "TEMPERATURE=0.7"
 
 set "TOP_P="
-set /p TOP_P=top_p (0-1) [1.0]:
+set /p TOP_P=top_p (0-1) [1.0]: 
 if not defined TOP_P set "TOP_P=1.0"
 
 set "MAX_TOKENS="
-set /p MAX_TOKENS=max_tokens (Enter = ei rajaa):
+set /p MAX_TOKENS=max_tokens (Enter = ei rajaa): 
 
 set "PRESENCE="
-set /p PRESENCE=presence_penalty (-2–2) [0.0]:
+set /p PRESENCE=presence_penalty (-2–2) [0.0]: 
 if not defined PRESENCE set "PRESENCE=0.0"
 
 set "FREQUENCY="
-set /p FREQUENCY=frequency_penalty (-2–2) [0.0]:
+set /p FREQUENCY=frequency_penalty (-2–2) [0.0]: 
 if not defined FREQUENCY set "FREQUENCY=0.0"
 
 set "BACKEND="
-set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai):
+set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai): 
 if not defined BACKEND set "BACKEND=openai"
 
 set "BG_CHOICE="
-set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K):
+set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K): 
 if /I "%BG_CHOICE%"=="E" (
     set "BG_ENABLED=0"
 ) else (
@@ -145,14 +136,14 @@ if /I "%BG_CHOICE%"=="E" (
 )
 
 set "BG_PATH="
-set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä):
+set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä): 
 
 set "BG_OPACITY="
-set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]:
+set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]: 
 if not defined BG_OPACITY set "BG_OPACITY=0.18"
 
 set "FONT_SIZE="
-set /p FONT_SIZE=Chat-tekstin pistekoko [12]:
+set /p FONT_SIZE=Chat-tekstin pistekoko [12]: 
 if not defined FONT_SIZE set "FONT_SIZE=12"
 
 set "ANOMAI_API_KEY=%OPENAI_KEY%"
@@ -172,7 +163,8 @@ set "ANOMAI_CONFIG_PATH=%SCRIPT_DIR%config.json"
 set "ANOMAI_HISTORY_PATH=%SCRIPT_DIR%history.json"
 
 set "CONFIG_WRITER=%TEMP%\anomai_config_writer.py"
->"%CONFIG_WRITER%" (
+setlocal DisableDelayedExpansion
+(
     echo import copy
     echo import json
     echo import os
@@ -243,10 +235,10 @@ set "CONFIG_WRITER=%TEMP%\anomai_config_writer.py"
     echo if not history_path.exists():
     echo     history_path.write_text("[]\n", encoding="utf-8")
     echo print(f"Konfiguraatio tallennettu: {config_path}")
-)
-
-"%ACTIVE_PYTHON%" "%CONFIG_WRITER%"
+) >"%CONFIG_WRITER%"
+call "%ACTIVE_PYTHON%" "%CONFIG_WRITER%"
 set "CFG_ERROR=%ERRORLEVEL%"
+endlocal & set "CFG_ERROR=%CFG_ERROR%"
 del "%CONFIG_WRITER%" >nul 2>&1
 if %CFG_ERROR% NEQ 0 (
     echo Konfiguraation kirjoitus epäonnistui.
@@ -256,7 +248,7 @@ if %CFG_ERROR% NEQ 0 (
 
 echo.
 echo *** Luodaan AnomAI.exe ***
-call :run_with_retry "\"%ACTIVE_PYTHON%\" -m pip install --upgrade pyinstaller pillow pyinstaller-hooks-contrib" "PyInstaller-riippuvuuksien asennus" 0
+call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pyinstaller pillow pyinstaller-hooks-contrib" "PyInstaller-riippuvuuksien asennus" 0
 if errorlevel 1 (
     echo PyInstaller-riippuvuuksia ei saatu asennettua. Asennus jatkuu ilman EXE-pakettia.
     set "BUILD_STATUS=FAIL"
@@ -266,7 +258,7 @@ if errorlevel 1 (
 set "LLAMA_AVAILABLE="
 if defined LLAMA_INSTALLED set "LLAMA_AVAILABLE=1"
 if not defined LLAMA_AVAILABLE (
-    "%ACTIVE_PYTHON%" -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('llama_cpp') else 1)" >nul 2>&1
+    call "%ACTIVE_PYTHON%" -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('llama_cpp') else 1)" >nul 2>&1
     if errorlevel 1 (
         set "LLAMA_AVAILABLE="
         echo Huom: llama-cpp-pythonia ei löytynyt. Paikallisen mallin tuki ei sisälly EXE:hen.
@@ -275,24 +267,22 @@ if not defined LLAMA_AVAILABLE (
     )
 )
 
+set "ICON_PATH="
 if exist logo.png (
-    call :run_with_retry "\"%ACTIVE_PYTHON%\" make_ico.py logo.png logo.ico" "logo.ico (pikakuvake ja ikoni)" 0
-    if errorlevel 1 (
-        echo logon muunto epäonnistui. Käytetään PyInstallerin oletusikonia.
-    ) else (
-        set "ICON_PATH=%SCRIPT_DIR%logo.ico"
-    )
+    call :run_with_retry "%ACTIVE_PYTHON%" "make_ico.py logo.png logo.ico" "logo.ico (pikakuvake ja ikoni)" 1
+    if not errorlevel 1 if exist "%SCRIPT_DIR%logo.ico" set "ICON_PATH=%SCRIPT_DIR%logo.ico"
 ) else (
     echo logo.png puuttuu - käytetään oletusikonia.
 )
 
-set "PYINSTALLER_OPTS=--noconsole --name AnomAI"
-if defined ICON_PATH set "PYINSTALLER_OPTS=%PYINSTALLER_OPTS% --icon \"%ICON_PATH%\""
-if exist README.MD set "PYINSTALLER_OPTS=%PYINSTALLER_OPTS% --add-data \"README.MD;.\""
-if exist logo.png set "PYINSTALLER_OPTS=%PYINSTALLER_OPTS% --add-data \"logo.png;.\""
-if defined LLAMA_AVAILABLE set "PYINSTALLER_OPTS=%PYINSTALLER_OPTS% --collect-all llama_cpp"
+set "PYINSTALLER_ARGS=-m pyinstaller --noconsole --name AnomAI"
+if defined ICON_PATH set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --icon ""%ICON_PATH%"""
+if exist README.MD set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""README.MD;."""
+if exist logo.png set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --add-data ""logo.png;."""
+if defined LLAMA_AVAILABLE set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% --collect-all llama_cpp"
+set "PYINSTALLER_ARGS=%PYINSTALLER_ARGS% jugiai.py"
 
-call :run_with_retry "\"%ACTIVE_PYTHON%\" -m pyinstaller %PYINSTALLER_OPTS% jugiai.py" "AnomAI.exe:n koostaminen" 0
+call :run_with_retry "%ACTIVE_PYTHON%" "%PYINSTALLER_ARGS%" "AnomAI.exe:n koostaminen" 0
 if errorlevel 1 (
     echo EXE:n koostaminen epäonnistui. Tarkista yllä oleva virheilmoitus ja yritä uudelleen.
     set "BUILD_STATUS=FAIL"
@@ -317,6 +307,8 @@ echo Pakataan julkaisuversio zip-arkistoon...
 powershell -NoProfile -Command "Compress-Archive -Force -Path '%SCRIPT_DIR%dist\AnomAI\*' -DestinationPath '%SCRIPT_DIR%AnomAI_Windows.zip'" >nul 2>&1
 if errorlevel 1 (
     echo Zip-paketin luonti ei onnistunut. Voit luoda sen myöhemmin ajamalla build_exe.bat.
+) else (
+    echo Zip-paketti luotu: %SCRIPT_DIR%AnomAI_Windows.zip
 )
 
 echo Luodaan työpöydälle pikakuvake...
@@ -326,7 +318,7 @@ if defined DESKTOP_DIR (
     set "SHORTCUT=%DESKTOP_DIR%\AnomAI.lnk"
     set "SC_ICON=%ICON_PATH%"
     if not defined SC_ICON set "SC_ICON=%EXE_PATH%"
-    powershell -NoProfile -Command "^$w=New-Object -ComObject WScript.Shell; ^$s=^$w.CreateShortcut('%SHORTCUT%'); ^$s.TargetPath='%EXE_PATH%'; ^$s.WorkingDirectory='%SCRIPT_DIR%'; ^$s.IconLocation='%SC_ICON%'; ^$s.Save()" >nul 2>&1
+    powershell -NoProfile -Command "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut('%SHORTCUT%'); $s.TargetPath='%EXE_PATH%'; $s.WorkingDirectory='%SCRIPT_DIR%'; $s.IconLocation='%SC_ICON%'; $s.Save()" >nul 2>&1
     if errorlevel 1 (
         echo Pikakuvakkeen luonti epäonnistui. Luo tarvittaessa manuaalisesti kohteeseen: %DESKTOP_DIR%
     ) else (
@@ -341,15 +333,14 @@ echo.
 echo ======================================================
 if /I "%BUILD_STATUS%"=="OK" (
     echo Asennus valmis!
-    if exist "%SCRIPT_DIR%config.json" echo - Konfiguraatiotiedosto: %SCRIPT_DIR%config.json
-    if exist "%EXE_PATH%" echo - Suorituskelpoinen tiedosto: %EXE_PATH%
-    if exist "%SCRIPT_DIR%AnomAI.exe" echo - Pikakäynnistin: %SCRIPT_DIR%AnomAI.exe
-    if exist "%SCRIPT_DIR%AnomAI_Windows.zip" echo - Jakopaketti: %SCRIPT_DIR%AnomAI_Windows.zip
-    echo - Käynnistä sovellus: start_jugiai.bat tai työpöydän AnomAI-pikakuvake
 ) else (
     echo Asennus suoritettiin, mutta kaikki vaiheet eivät onnistuneet.
-    echo Tarkista virheilmoitukset ja aja install.bat uudelleen tarvittaessa.
 )
+if exist "%SCRIPT_DIR%config.json" echo - Konfiguraatiotiedosto: %SCRIPT_DIR%config.json
+if exist "%EXE_PATH%" echo - Suorituskelpoinen tiedosto: %EXE_PATH%
+if exist "%SCRIPT_DIR%AnomAI.exe" echo - Pikakäynnistin: %SCRIPT_DIR%AnomAI.exe
+if exist "%SCRIPT_DIR%AnomAI_Windows.zip" echo - Jakopaketti: %SCRIPT_DIR%AnomAI_Windows.zip
+echo - Käynnistä sovellus: start_jugiai.bat tai työpöydän AnomAI-pikakuvake
 echo.
 echo Pidä API-avaimesi tallessa ja nauti JugiAI:n tehostetusta käyttöliittymästä.
 echo ======================================================
@@ -360,45 +351,114 @@ goto :cleanup
 
 :resolvePython
 set "TRY=%~1"
-for /f "usebackq tokens=* delims=" %%P in (`%TRY% -c "import sys; print(sys.executable)" 2^>nul`) do (
+for /f "usebackq tokens=* delims=" %%P in (`%TRY% -c "import sys;print(sys.executable)" 2^>nul`) do (
     set "PYTHON_EXE=%%P"
-    set "PYTHON_FRIENDLY=%TRY%"
+    set "PYTHON_SOURCE=%TRY%"
     goto :eof
 )
 goto :eof
 
+:python_version_check
+for /f %%V in ('"%PYTHON_EXE%" -c "import sys;print('.'.join(map(str, sys.version_info[:2])))" 2^>nul') do set "PY_MINOR=%%V"
+if not defined PY_MINOR (
+    echo Python-version selvittäminen epäonnistui.
+    exit /b 1
+)
+for /f "tokens=1,2 delims=." %%A in ("%PY_MINOR%") do (
+    set "PY_MAJOR=%%A"
+    set "PY_MINOR_PART=%%B"
+)
+if not defined PY_MINOR_PART set "PY_MINOR_PART=0"
+set /a PY_CHECK=PY_MAJOR*100+PY_MINOR_PART
+if %PY_CHECK% LSS 309 (
+    echo Python-version on oltava 3.9 tai uudempi.
+    exit /b 1
+)
+exit /b 0
+
+:python_version_check_active
+set "PYTHON_EXE=%ACTIVE_PYTHON%"
+call :python_version_check
+exit /b 0
+
+:install_llama
+echo.
+echo *** Paikallisen mallin asennus ***
+set "ORIGINAL_ACTIVE=%ACTIVE_PYTHON%"
+if "%PY_MINOR%"=="3.13" (
+    echo Havaittiin Python 3.13. Yritetään käyttää Python 3.12 -ympäristöä llm-asennukseen.
+    set "PY312_EXE="
+    for /f "usebackq tokens=* delims=" %%P in (`py -3.12 -c "import sys;print(sys.executable)" 2^>nul`) do set "PY312_EXE=%%P"
+    if defined PY312_EXE (
+        set "VENV312=%SCRIPT_DIR%venv312"
+        echo Luodaan Python 3.12 -virtuaaliympäristö: %VENV312%
+        py -3.12 -m venv "%VENV312%"
+        if errorlevel 1 (
+            echo Python 3.12 -virtuaaliympäristön luonti epäonnistui. Yritetään nykyisellä Python-versiolla.
+        ) else (
+            set "ACTIVE_PYTHON=%VENV312%\Scripts\python.exe"
+            if not exist "%ACTIVE_PYTHON%" set "ACTIVE_PYTHON=%VENV312%\Scripts\pythonw.exe"
+            if exist "%ACTIVE_PYTHON%" (
+                echo Python 3.12 -ympäristö käytössä: %ACTIVE_PYTHON%
+                call :python_version_check_active
+                call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pip" "Python 3.12 pip -päivitys" 1
+                call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade --prefer-binary llama-cpp-python" "llama-cpp-pythonin asennus (Python 3.12)" 0
+                if errorlevel 1 (
+                    echo llama-cpp-pythonin asennus epäonnistui Python 3.12 -ympäristössä.
+                    set "ACTIVE_PYTHON=%ORIGINAL_ACTIVE%"
+                ) else (
+                    set "LLAMA_INSTALLED=1"
+                )
+            ) else (
+                set "ACTIVE_PYTHON=%ORIGINAL_ACTIVE%"
+            )
+        )
+    ) else (
+        echo Python 3.12 ei löydy. Jatketaan 3.13:lla (vaatii MSVC + CMake).
+    )
+)
+if not defined LLAMA_INSTALLED (
+    call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade --prefer-binary llama-cpp-python" "llama-cpp-pythonin asennus" 0
+    if errorlevel 1 (
+        echo Huom: paikallisen mallin tuki ei ole käytettävissä ennen kuin asennus onnistuu.
+        set "ACTIVE_PYTHON=%ORIGINAL_ACTIVE%"
+    ) else (
+        set "LLAMA_INSTALLED=1"
+    )
+)
+if not defined LLAMA_INSTALLED set "ACTIVE_PYTHON=%ORIGINAL_ACTIVE%"
+call :python_version_check_active
+exit /b 0
+
 :run_with_retry
-set "CMD=%~1"
-set "DESC=%~2"
-set "OPTIONAL=%~3"
-if not defined OPTIONAL set "OPTIONAL=0"
+set "RUN_EXE=%~1"
+set "RUN_ARGS=%~2"
+set "RUN_DESC=%~3"
+set "RUN_OPTIONAL=%~4"
+if not defined RUN_OPTIONAL set "RUN_OPTIONAL=0"
 set "RETRY=K"
 :retry_loop
 echo.
-echo === !DESC! ===
-call %CMD%
+echo === !RUN_DESC! ===
+call "%RUN_EXE%" %RUN_ARGS%
 set "ERR=%ERRORLEVEL%"
-if !ERR! EQU 0 goto :retry_success
+rem On success, always return 0; on failure, preserve the error code (see exit handling below).
+if !ERR! EQU 0 exit /b 0
 echo.
-echo !DESC! epäonnistui (virhekoodi !ERR!).
-set "RETRY=K"
-set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K):
+echo !RUN_DESC! epäonnistui (virhekoodi !ERR!).
+set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K): 
 if /I "!RETRY!"=="E" (
-    if "!OPTIONAL!"=="1" (
-        echo Ohitetaan vaihe: !DESC!.
-        set "ERR=0"
-        goto :retry_success
+    if "!RUN_OPTIONAL!"=="1" (
+        echo Ohitetaan vaihe: !RUN_DESC!.
+        exit /b 0
     ) else (
         echo Vaihetta ei voitu suorittaa loppuun.
-        exit /b 1
+        exit /b !ERR!
     )
 )
 goto :retry_loop
 
-:retry_success
-exit /b !ERR!
-
 :cleanup
 popd
 endlocal
-exit /b
+exit /b 0
