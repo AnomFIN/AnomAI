@@ -1,0 +1,66 @@
+name: Windows PyInstaller Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Display Python version
+        run: python --version
+      
+      - name: Install dependencies and build with non-interactive install
+        shell: cmd
+        env:
+          BUILD_NONINTERACTIVE: "1"
+        run: |
+          echo Running install.bat in non-interactive mode...
+          call install.bat --noninteractive
+      
+      - name: Verify build artifacts
+        shell: pwsh
+        run: |
+          if (Test-Path "dist\AnomAI\AnomAI.exe") {
+            Write-Host "Build successful: AnomAI.exe found"
+            Get-Item "dist\AnomAI\AnomAI.exe" | Format-List
+          } else {
+            Write-Error "Build failed: AnomAI.exe not found"
+            exit 1
+          }
+      
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnomAI-Windows-exe
+          path: dist/AnomAI/
+          retention-days: 30
+      
+      - name: Upload distribution zip if exists
+        uses: actions/upload-artifact@v4
+        if: hashFiles('AnomAI_Windows.zip') != ''
+        with:
+          name: AnomAI-Windows-zip
+          path: AnomAI_Windows.zip
+          retention-days: 30
