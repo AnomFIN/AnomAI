@@ -86,6 +86,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+def _log_warning(message: str) -> None:
+    """Simple console warning logger for watermark and other non-critical errors."""
+    print(f"[WARNING] {message}", flush=True)
+
+
 class JugiAIApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -100,6 +105,7 @@ class JugiAIApp(tk.Tk):
         self._wm_raw_img = None
         self._wm_scaled_img = None
         self._wm_overlay: tk.Label | None = None
+        self.watermark_enabled = True  # Flag to track if watermark loading is available
         self.llm = None
         self.llm_model_path = None
 
@@ -1555,33 +1561,75 @@ class JugiAIApp(tk.Tk):
             pass
 
     def _load_watermark_image(self, respect_visibility: bool = True) -> None:
+        """
+        Load watermark image with comprehensive error handling.
+        If any error occurs, logs a warning and disables watermark instead of crashing.
+        """
         self._wm_img = None
         self._wm_raw_img = None
         self._wm_scaled_img = None
+        
+        if not self.watermark_enabled:
+            self._remove_watermark_overlay()
+            return
+            
         if respect_visibility and not self.config_dict.get("show_background", True):
             self._remove_watermark_overlay()
             return
-        path = self._resolve_default_logo()
-        if not path:
-            self._remove_watermark_overlay()
-            return
+            
         try:
-            raw_img = tk.PhotoImage(file=path)
-        except Exception:
+            path = self._resolve_default_logo()
+            if not path:
+                self._remove_watermark_overlay()
+                return
+                
+            if not os.path.exists(path):
+                _log_warning(f"Watermark image file not found: {path}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+                
+            try:
+                raw_img = tk.PhotoImage(file=path)
+            except tk.TclError as e:
+                _log_warning(f"Failed to load watermark image (TclError): {e}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+            except Exception as e:
+                _log_warning(f"Failed to load watermark image: {e}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+                
+            subs = int(self.config_dict.get("background_subsample", 2))
+            subs = max(1, min(8, subs))
+            try:
+                scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            except Exception as e:
+                _log_warning(f"Failed to subsample watermark image: {e}")
+                scaled = raw_img
+                
+            opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            
+            try:
+                processed = self._apply_watermark_opacity(scaled, opacity_val)
+            except Exception as e:
+                _log_warning(f"Failed to apply watermark opacity: {e}")
+                processed = scaled
+                
+            self._wm_raw_img = raw_img
+            self._wm_scaled_img = scaled
+            self._wm_img = processed
+            
+        except Exception as e:
+            _log_warning(f"Unexpected error loading watermark, continuing without it: {e}")
+            self.watermark_enabled = False
+            self._wm_img = None
+            self._wm_raw_img = None
+            self._wm_scaled_img = None
             self._remove_watermark_overlay()
-            return
-        subs = int(self.config_dict.get("background_subsample", 2))
-        subs = max(1, min(8, subs))
-        try:
-            scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
-        except Exception:
-            scaled = raw_img
-        opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
-        opacity_val = max(0.0, min(1.0, opacity_val))
-        processed = self._apply_watermark_opacity(scaled, opacity_val)
-        self._wm_raw_img = raw_img
-        self._wm_scaled_img = scaled
-        self._wm_img = processed
 
     def _insert_watermark_if_needed(self) -> None:
         if not self._wm_img:
@@ -1677,63 +1725,116 @@ class JugiAIApp(tk.Tk):
         self._position_watermark_overlay()
 
     def _apply_watermark_opacity(self, img: tk.PhotoImage, opacity: float) -> tk.PhotoImage:
+        """
+        Apply opacity to a PhotoImage by blending with background color.
+        Always returns a valid RGB/RGBA image, falls back to original on errors.
+        """
         opacity = max(0.0, min(1.0, float(opacity)))
         try:
             width = img.width()
             height = img.height()
-        except Exception:
+        except Exception as e:
+            _log_warning(f"Failed to get image dimensions: {e}")
             return img
+        
         if opacity >= 0.999:
             try:
                 return img.copy()
-            except Exception:
+            except Exception as e:
+                _log_warning(f"Failed to copy image: {e}")
                 return img
+        
         bg_color = "#0b1220"
         try:
             bg_color = self.chat.cget("bg")
         except Exception:
             pass
-        bg_rgb = self._hex_to_rgb(bg_color)
-        result = tk.PhotoImage(width=width, height=height)
-        for y in range(height):
-            row_colors = []
-            for x in range(width):
-                try:
-                    pixel = img.get(x, y)
-                except Exception:
-                    pixel = bg_color
-                if not pixel:
-                    blended_rgb = bg_rgb
-                else:
-                    rgb = self._hex_to_rgb(pixel)
-                    blended_rgb = (
-                        int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
-                        int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
-                        int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
-                    )
-                row_colors.append(self._rgb_to_hex(blended_rgb))
-            result.put("{" + " ".join(row_colors) + "}", to=(0, y))
-        return result
+        
+        try:
+            bg_rgb = self._hex_to_rgb(bg_color)
+            result = tk.PhotoImage(width=width, height=height)
+            
+            for y in range(height):
+                row_colors = []
+                for x in range(width):
+                    try:
+                        pixel = img.get(x, y)
+                    except Exception:
+                        pixel = bg_color
+                    
+                    if not pixel:
+                        blended_rgb = bg_rgb
+                    else:
+                        rgb = self._hex_to_rgb(pixel)
+                        blended_rgb = (
+                            int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
+                            int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
+                            int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
+                        )
+                    row_colors.append(self._rgb_to_hex(blended_rgb))
+                result.put("{" + " ".join(row_colors) + "}", to=(0, y))
+            
+            return result
+        except Exception as e:
+            _log_warning(f"Failed to apply opacity, returning original image: {e}")
+            return img
 
-    def _hex_to_rgb(self, value: str) -> tuple[int, int, int]:
+    def _hex_to_rgb(self, value: str | tuple | list) -> tuple[int, int, int]:
+        """
+        Convert color value to RGB tuple.
+        Accepts:
+        - Hex strings like '#rrggbb'
+        - Named colors
+        - Tuples/lists of (r, g, b) values (0-255)
+        - Tuples/lists of percentages (0.0-1.0)
+        Returns a valid RGB tuple (r, g, b) with values 0-255.
+        """
+        # Handle tuple/list input
+        if isinstance(value, (tuple, list)):
+            if len(value) >= 3:
+                # Check if values are percentages (0.0-1.0) or absolute (0-255)
+                first_val = value[0]
+                if isinstance(first_val, (int, float)):
+                    if 0.0 <= first_val <= 1.0 and isinstance(first_val, float):
+                        # Assume percentages
+                        r = int(value[0] * 255)
+                        g = int(value[1] * 255)
+                        b = int(value[2] * 255)
+                    else:
+                        # Assume absolute values
+                        r = int(value[0])
+                        g = int(value[1])
+                        b = int(value[2])
+                    return (
+                        max(0, min(255, r)),
+                        max(0, min(255, g)),
+                        max(0, min(255, b)),
+                    )
+            return 11, 18, 32  # Default fallback
+        
+        # Handle string input
         value = (value or "").strip()
         if value.startswith("#") and len(value) == 7:
             try:
                 return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))
             except Exception:
                 pass
+        
+        # Try Tkinter's winfo_rgb for named colors
         try:
             r, g, b = self.winfo_rgb(value)
             return r // 256, g // 256, b // 256
         except Exception:
-            return 11, 18, 32
+            return 11, 18, 32  # Default fallback color
 
-    def _rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
-        r, g, b = rgb
-        r = max(0, min(255, int(r)))
-        g = max(0, min(255, int(g)))
-        b = max(0, min(255, int(b)))
-        return f"#{r:02x}{g:02x}{b:02x}"
+    def _rgb_to_hex(self, rgb: tuple[int, int, int] | list) -> str:
+        """Convert RGB tuple/list to hex color string."""
+        if isinstance(rgb, (tuple, list)) and len(rgb) >= 3:
+            r = max(0, min(255, int(rgb[0])))
+            g = max(0, min(255, int(rgb[1])))
+            b = max(0, min(255, int(rgb[2])))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        return "#0b1220"  # Default fallback
 
 
 def main() -> None:
