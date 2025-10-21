@@ -8,6 +8,8 @@ on:
 jobs:
   windows-build:
     runs-on: windows-latest
+    permissions:
+      contents: read
     env:
       BUILD_NONINTERACTIVE: "1"
     steps:
