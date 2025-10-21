@@ -4,6 +4,21 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%"
 
+rem Check for non-interactive mode and setup logging
+if defined BUILD_NONINTERACTIVE (
+    set "SKIP_PAUSE=1"
+    echo Non-interactive mode enabled
+    rem Redirect all output to install.log
+    call :main >install.log 2>&1
+    exit /b %ERRORLEVEL%
+)
+
+rem Interactive mode - no logging redirection
+call :main
+exit /b %ERRORLEVEL%
+
+:main
+
 chcp 65001 >nul
 title AnomFIN · JugiAI Asennus
 color 0b
@@ -31,13 +46,14 @@ if defined PYTHON_EXE goto :python_found
 
 echo Python 3 -tulkkia ei löytynyt. Asenna uusin versio osoitteesta:
 echo https://www.python.org/downloads/windows/
-pause
+if not defined SKIP_PAUSE pause
 goto :cleanup
 
 :python_found
 echo Löydetty Python: %PYTHON_EXE%
 
 :confirm_python
+if defined SKIP_PAUSE goto :skip_python_confirm
 set "CUSTOM_PY="
 set /p CUSTOM_PY=Anna halutessasi toinen Python 3 -tulkki (Enter = käytä löydettyä): 
 if defined CUSTOM_PY (
@@ -49,6 +65,8 @@ if defined CUSTOM_PY (
     )
 )
 
+:skip_python_confirm
+
 call :python_version_check
 if errorlevel 1 goto :confirm_python
 
@@ -58,7 +76,7 @@ echo Käytetään Python-tulkkia: %ACTIVE_PYTHON%
 echo.
 set "VENV_DIR=%SCRIPT_DIR%venv"
 set "CREATE_VENV=K"
-set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö venv-kansioon? [K/E] (oletus K): 
+if not defined SKIP_PAUSE set /p CREATE_VENV=Luodaanko erillinen virtuaaliympäristö venv-kansioon? [K/E] (oletus K): 
 if /I "%CREATE_VENV%"=="E" goto :skip_venv
 
 echo Luodaan virtuaaliympäristö...
@@ -81,7 +99,7 @@ echo.
 call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pip" "Pipin päivitys" 1
 
 set "INSTALL_LLAMA=E"
-set /p INSTALL_LLAMA=Asennetaanko paikallisen mallin tuki (llama-cpp-python)? [K/E] (valinnainen): 
+if not defined SKIP_PAUSE set /p INSTALL_LLAMA=Asennetaanko paikallisen mallin tuki (llama-cpp-python)? [K/E] (valinnainen): 
 if /I "%INSTALL_LLAMA%"=="K" (
     call :install_llama
 )
@@ -90,45 +108,58 @@ echo.
 echo *** JugiAI:n konfigurointi ***
 :ask_api
 set "OPENAI_KEY="
-set /p OPENAI_KEY=Syötä OpenAI API -avain (pakollinen): 
-if not defined OPENAI_KEY (
-    echo API-avain tarvitaan jatkaaksesi.
-    goto :ask_api
+if defined SKIP_PAUSE (
+    rem In non-interactive mode, use environment variable or skip config
+    if defined ANOMAI_API_KEY (
+        set "OPENAI_KEY=%ANOMAI_API_KEY%"
+        echo Using API key from environment variable
+    ) else (
+        echo Skipping configuration in non-interactive mode (no API key provided)
+        goto :skip_config
+    )
+) else (
+    set /p OPENAI_KEY=Syötä OpenAI API -avain (pakollinen): 
+    if not defined OPENAI_KEY (
+        echo API-avain tarvitaan jatkaaksesi.
+        goto :ask_api
+    )
 )
 
 set "MODEL="
-set /p MODEL=Ensisijainen malli [gpt-4o-mini]: 
+if not defined SKIP_PAUSE set /p MODEL=Ensisijainen malli [gpt-4o-mini]: 
 if not defined MODEL set "MODEL=gpt-4o-mini"
 
 set "SYSTEM_PROMPT="
-echo Anna halutessasi mukautettu system-prompt (Enter = käytä oletusta):
-set /p SYSTEM_PROMPT=: 
+if not defined SKIP_PAUSE (
+    echo Anna halutessasi mukautettu system-prompt (Enter = käytä oletusta):
+    set /p SYSTEM_PROMPT=: 
+)
 
 set "TEMPERATURE="
-set /p TEMPERATURE=Temperature (0-2) [0.7]: 
+if not defined SKIP_PAUSE set /p TEMPERATURE=Temperature (0-2) [0.7]: 
 if not defined TEMPERATURE set "TEMPERATURE=0.7"
 
 set "TOP_P="
-set /p TOP_P=top_p (0-1) [1.0]: 
+if not defined SKIP_PAUSE set /p TOP_P=top_p (0-1) [1.0]: 
 if not defined TOP_P set "TOP_P=1.0"
 
 set "MAX_TOKENS="
-set /p MAX_TOKENS=max_tokens (Enter = ei rajaa): 
+if not defined SKIP_PAUSE set /p MAX_TOKENS=max_tokens (Enter = ei rajaa): 
 
 set "PRESENCE="
-set /p PRESENCE=presence_penalty (-2–2) [0.0]: 
+if not defined SKIP_PAUSE set /p PRESENCE=presence_penalty (-2–2) [0.0]: 
 if not defined PRESENCE set "PRESENCE=0.0"
 
 set "FREQUENCY="
-set /p FREQUENCY=frequency_penalty (-2–2) [0.0]: 
+if not defined SKIP_PAUSE set /p FREQUENCY=frequency_penalty (-2–2) [0.0]: 
 if not defined FREQUENCY set "FREQUENCY=0.0"
 
 set "BACKEND="
-set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai): 
+if not defined SKIP_PAUSE set /p BACKEND=Taustajärjestelmä [openai/local] (oletus openai): 
 if not defined BACKEND set "BACKEND=openai"
 
 set "BG_CHOICE="
-set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K): 
+if not defined SKIP_PAUSE set /p BG_CHOICE=Aktivoidaanko AnomFIN-taustayhdistelmä? [K/E] (oletus K): 
 if /I "%BG_CHOICE%"=="E" (
     set "BG_ENABLED=0"
 ) else (
@@ -136,14 +167,14 @@ if /I "%BG_CHOICE%"=="E" (
 )
 
 set "BG_PATH="
-set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä): 
+if not defined SKIP_PAUSE set /p BG_PATH=Taustakuvan polku (Enter = jätä tyhjä): 
 
 set "BG_OPACITY="
-set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]: 
+if not defined SKIP_PAUSE set /p BG_OPACITY=Taustan peittävyys (0-1) [0.18]: 
 if not defined BG_OPACITY set "BG_OPACITY=0.18"
 
 set "FONT_SIZE="
-set /p FONT_SIZE=Chat-tekstin pistekoko [12]: 
+if not defined SKIP_PAUSE set /p FONT_SIZE=Chat-tekstin pistekoko [12]: 
 if not defined FONT_SIZE set "FONT_SIZE=12"
 
 set "ANOMAI_API_KEY=%OPENAI_KEY%"
@@ -246,6 +277,8 @@ if %CFG_ERROR% NEQ 0 (
     goto :summary
 )
 
+:skip_config
+
 echo.
 echo *** Luodaan AnomAI.exe ***
 call :run_with_retry "%ACTIVE_PYTHON%" "-m pip install --upgrade pyinstaller pillow pyinstaller-hooks-contrib" "PyInstaller-riippuvuuksien asennus" 0
@@ -345,7 +378,7 @@ echo.
 echo Pidä API-avaimesi tallessa ja nauti JugiAI:n tehostetusta käyttöliittymästä.
 echo ======================================================
 echo.
-pause
+if not defined SKIP_PAUSE pause
 
 goto :cleanup
 
@@ -446,6 +479,15 @@ rem On success, always return 0; on failure, preserve the error code (see exit h
 if !ERR! EQU 0 exit /b 0
 echo.
 echo !RUN_DESC! epäonnistui (virhekoodi !ERR!).
+if defined SKIP_PAUSE (
+    if "!RUN_OPTIONAL!"=="1" (
+        echo Ohitetaan vaihe: !RUN_DESC!.
+        exit /b 0
+    ) else (
+        echo Vaihetta ei voitu suorittaa loppuun (non-interactive mode).
+        exit /b !ERR!
+    )
+)
 set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K): 
 if /I "!RETRY!"=="E" (
     if "!RUN_OPTIONAL!"=="1" (
@@ -460,5 +502,9 @@ goto :retry_loop
 
 :cleanup
 popd
+if /I "%BUILD_STATUS%"=="FAIL" (
+    endlocal
+    exit /b 1
+)
 endlocal
 exit /b 0

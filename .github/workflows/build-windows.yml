@@ -1,0 +1,51 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      BUILD_NONINTERACTIVE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run installer
+        shell: cmd
+        run: |
+          call install.bat || (
+            echo.
+            echo ===== INSTALLATION FAILED =====
+            echo.
+            if exist install.log (
+              echo ===== install.log contents =====
+              type install.log
+              echo.
+            )
+            echo ===== Environment variables =====
+            set
+            echo.
+            exit /b 1
+          )
+
+      - name: Check build artifacts
+        if: success()
+        shell: pwsh
+        run: |
+          if (Test-Path "dist\AnomAI\AnomAI.exe") {
+            Write-Host "✓ AnomAI.exe created successfully"
+          } else {
+            Write-Host "✗ AnomAI.exe not found"
+            exit 1
+          }
