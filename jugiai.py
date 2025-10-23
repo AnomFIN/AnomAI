@@ -26,6 +26,13 @@ from typing import Any, Dict, Generator, List, Optional
 import urllib.error
 import urllib.request
 
+# Optional: PIL/Pillow support for improved image handling
+try:
+    from PIL import Image, ImageEnhance, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
@@ -1677,22 +1684,86 @@ class JugiAIApp(tk.Tk):
         self._position_watermark_overlay()
 
     def _apply_watermark_opacity(self, img: tk.PhotoImage, opacity: float) -> tk.PhotoImage:
-        opacity = max(0.0, min(1.0, float(opacity)))
+        """
+        Apply an opacity factor to a tk.PhotoImage.
+        Uses PIL/Pillow for better performance and reliability when available,
+        otherwise falls back to pixel-by-pixel manipulation.
+        - img: tk.PhotoImage
+        - opacity: numeric or string representing 0..1 (or 0..100 as percent)
+        Returns a tk.PhotoImage with opacity applied.
+        """
+        # Normalize opacity to float 0..1
+        try:
+            opacity_val = float(opacity)
+        except Exception:
+            # If someone passed "50" meaning 50%, normalize
+            try:
+                opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
+            except Exception:
+                opacity_val = 1.0
+
+        # If user gave 0..100 scale, convert
+        if opacity_val > 1.0:
+            opacity_val = max(0.0, min(100.0, opacity_val)) / 100.0
+
+        opacity_val = max(0.0, min(1.0, opacity_val))
+
+        # If opacity is essentially 1.0, just return a copy
+        if opacity_val >= 0.999:
+            try:
+                return img.copy()
+            except Exception:
+                return img
+
+        # Try PIL/Pillow approach for better performance
+        if PIL_AVAILABLE:
+            try:
+                # Convert tk.PhotoImage to PIL Image
+                # Get dimensions
+                width = img.width()
+                height = img.height()
+                
+                # Create a PIL image from tk.PhotoImage pixel data
+                # We need to get the data in a format PIL can use
+                pil_img = Image.new('RGBA', (width, height))
+                pixels = []
+                for y in range(height):
+                    for x in range(width):
+                        try:
+                            pixel = img.get(x, y)
+                            if pixel:
+                                rgb = self._hex_to_rgb(pixel)
+                                pixels.append(rgb + (255,))  # Add full alpha
+                            else:
+                                pixels.append((11, 18, 32, 255))
+                        except Exception:
+                            pixels.append((11, 18, 32, 255))
+                pil_img.putdata(pixels)
+                
+                # Apply opacity by modifying alpha channel
+                r, g, b, a = pil_img.split()
+                a = a.point(lambda v: int(v * opacity_val))
+                pil_img = Image.merge('RGBA', (r, g, b, a))
+                
+                # Convert back to tk.PhotoImage
+                return ImageTk.PhotoImage(pil_img)
+            except Exception:
+                # Fall through to fallback implementation
+                pass
+
+        # Fallback: pixel-by-pixel manipulation (original implementation)
         try:
             width = img.width()
             height = img.height()
         except Exception:
             return img
-        if opacity >= 0.999:
-            try:
-                return img.copy()
-            except Exception:
-                return img
+            
         bg_color = "#0b1220"
         try:
             bg_color = self.chat.cget("bg")
         except Exception:
             pass
+            
         bg_rgb = self._hex_to_rgb(bg_color)
         result = tk.PhotoImage(width=width, height=height)
         for y in range(height):
@@ -1707,26 +1778,63 @@ class JugiAIApp(tk.Tk):
                 else:
                     rgb = self._hex_to_rgb(pixel)
                     blended_rgb = (
-                        int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
-                        int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
-                        int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
+                        int(rgb[0] * opacity_val + bg_rgb[0] * (1.0 - opacity_val)),
+                        int(rgb[1] * opacity_val + bg_rgb[1] * (1.0 - opacity_val)),
+                        int(rgb[2] * opacity_val + bg_rgb[2] * (1.0 - opacity_val)),
                     )
                 row_colors.append(self._rgb_to_hex(blended_rgb))
             result.put("{" + " ".join(row_colors) + "}", to=(0, y))
         return result
 
-    def _hex_to_rgb(self, value: str) -> tuple[int, int, int]:
-        value = (value or "").strip()
-        if value.startswith("#") and len(value) == 7:
+    def _hex_to_rgb(self, value: str | tuple | list) -> tuple[int, int, int]:
+        """
+        Convert a color value to an (r, g, b) tuple (0..255).
+        Accepts:
+          - tuple/list: (r,g,b) or (r,g,b,a) -> uses first three elements
+          - hex string: '#RRGGBB', 'RRGGBB', '#RGB', 'RGB'
+          - numeric/other strings: attempts conversion via str()
+        Returns a default dark blue (11, 18, 32) for invalid inputs.
+        """
+        # If tuple/list already, take first 3 numeric components
+        if isinstance(value, (tuple, list)):
+            if len(value) < 3:
+                return (11, 18, 32)
             try:
-                return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))
+                r, g, b = int(value[0]), int(value[1]), int(value[2])
+                return (r, g, b)
             except Exception:
-                pass
+                return (11, 18, 32)
+
+        # None check
+        if value is None:
+            return (11, 18, 32)
+
+        s = str(value).strip()
+        if not s:
+            return (11, 18, 32)
+            
+        if s.startswith('#'):
+            s = s[1:]
+
+        # Short-hand rgb e.g. 'f0a' -> 'ff00aa'
+        if len(s) == 3:
+            s = ''.join(ch * 2 for ch in s)
+
+        if len(s) != 6:
+            # Try winfo_rgb as fallback for named colors
+            try:
+                r, g, b = self.winfo_rgb(value)
+                return r // 256, g // 256, b // 256
+            except Exception:
+                return (11, 18, 32)
+
         try:
-            r, g, b = self.winfo_rgb(value)
-            return r // 256, g // 256, b // 256
+            r = int(s[0:2], 16)
+            g = int(s[2:4], 16)
+            b = int(s[4:6], 16)
+            return (r, g, b)
         except Exception:
-            return 11, 18, 32
+            return (11, 18, 32)
 
     def _rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
         r, g, b = rgb
