@@ -115,6 +115,7 @@ class JugiAIApp(tk.Tk):
         self.stream_start_index: Optional[str] = None
         self.current_stream_text: str = ""
         self.current_stream_timestamp: Optional[str] = None
+        self._is_sending: bool = False
 
         self.style = ttk.Style(self)
         try:
@@ -816,6 +817,10 @@ class JugiAIApp(tk.Tk):
 
     # --- Events ---
     def on_send(self) -> None:
+        # Prevent multiple simultaneous sends
+        if self._is_sending:
+            return
+            
         text = self.input.get("1.0", tk.END).strip()
         attachments = [att.copy() for att in self.pending_attachments]
         if not text and not attachments:
@@ -846,6 +851,7 @@ class JugiAIApp(tk.Tk):
         self.pending_attachments = []
         self._refresh_attachment_chips()
 
+        self._is_sending = True
         self.set_busy(True)
         self.current_stream_timestamp = self._timestamp_now()
         self.start_assistant_stream(self.current_stream_timestamp)
@@ -877,6 +883,7 @@ class JugiAIApp(tk.Tk):
             msg = str(e)
             self.after(0, lambda m=msg: self.handle_stream_failure(m))
             self.after(0, lambda: self.set_busy(False))
+            self.after(0, lambda: setattr(self, '_is_sending', False))
             self.current_stream_timestamp = None
             return
 
@@ -895,6 +902,7 @@ class JugiAIApp(tk.Tk):
         self.after(0, self.save_history)
         self.after(0, self._update_overview_metrics)
         self.after(0, lambda: self.set_busy(False))
+        self.after(0, lambda: setattr(self, '_is_sending', False))
         self.current_stream_timestamp = None
 
     def stream_model_backend(self) -> Generator[str, None, None]:
