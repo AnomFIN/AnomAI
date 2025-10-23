@@ -1,0 +1,3 @@
+# Optional dependencies for enhanced functionality
+# Pillow is optional but recommended for improved watermark/background image handling on Windows
+pillow>=10.0.0
