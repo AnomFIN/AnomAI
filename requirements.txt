@@ -1,3 +1,4 @@
 # Optional dependencies for enhanced functionality
 # Pillow is optional but recommended for improved watermark/background image handling on Windows
-pillow>=10.0.0
+# Support Python 3.9+ by allowing older Pillow versions (8.x works with Python 3.9)
+pillow>=8.0.0
