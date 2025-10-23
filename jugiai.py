@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import tkinter as tk
+import traceback
 from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -258,6 +259,12 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+
+    def _safe_log(self, *args, **kwargs):
+        try:
+            print("[JugiAI]", *args, **kwargs)
+        except Exception:
+            pass
 
     # --- UI ---
     def _ensure_profiles(self) -> None:
@@ -1568,27 +1575,67 @@ class JugiAIApp(tk.Tk):
         if respect_visibility and not self.config_dict.get("show_background", True):
             self._remove_watermark_overlay()
             return
+        
+        try:
+            from PIL import Image
+            pil_available = True
+        except Exception:
+            pil_available = False
+            try:
+                self._safe_log("Pillow (PIL) is not installed. Watermark disabled. Install Pillow to enable watermark features.")
+            except Exception:
+                print("[JugiAI] Pillow (PIL) missing; watermark disabled.")
+        
         path = self._resolve_default_logo()
         if not path:
             self._remove_watermark_overlay()
+            if pil_available:
+                try:
+                    self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+                except Exception:
+                    pass
             return
+        
+        if not os.path.isfile(path):
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+            except Exception:
+                pass
+            return
+        
         try:
             raw_img = tk.PhotoImage(file=path)
         except Exception:
             self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
             return
-        subs = int(self.config_dict.get("background_subsample", 2))
-        subs = max(1, min(8, subs))
+        
         try:
-            scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            subs = int(self.config_dict.get("background_subsample", 2))
+            subs = max(1, min(8, subs))
+            try:
+                scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            except Exception:
+                scaled = raw_img
+            opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            processed = self._apply_watermark_opacity(scaled, opacity_val)
+            self._wm_raw_img = raw_img
+            self._wm_scaled_img = scaled
+            self._wm_img = processed
         except Exception:
-            scaled = raw_img
-        opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
-        opacity_val = max(0.0, min(1.0, opacity_val))
-        processed = self._apply_watermark_opacity(scaled, opacity_val)
-        self._wm_raw_img = raw_img
-        self._wm_scaled_img = scaled
-        self._wm_img = processed
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
+            return
 
     def _insert_watermark_if_needed(self) -> None:
         if not self._wm_img:
@@ -1711,7 +1758,7 @@ class JugiAIApp(tk.Tk):
         # If opacity is essentially 1.0, just return a copy
         if opacity_val >= 0.999:
             try:
-                return img.copy()
+                opacity_val = float(opacity)
             except Exception:
                 return img
 
@@ -1770,7 +1817,7 @@ class JugiAIApp(tk.Tk):
             row_colors = []
             for x in range(width):
                 try:
-                    pixel = img.get(x, y)
+                    opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
                 except Exception:
                     pixel = bg_color
                 if not pixel:
