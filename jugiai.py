@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import tkinter as tk
+import traceback
 from datetime import datetime
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -25,6 +26,13 @@ from typing import Any, Dict, Generator, List, Optional
 
 import urllib.error
 import urllib.request
+
+# Optional: PIL/Pillow support for improved image handling
+try:
+    from PIL import Image, ImageEnhance, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
@@ -107,6 +115,7 @@ class JugiAIApp(tk.Tk):
         self.stream_start_index: Optional[str] = None
         self.current_stream_text: str = ""
         self.current_stream_timestamp: Optional[str] = None
+        self._is_sending: bool = False
 
         self.style = ttk.Style(self)
         try:
@@ -251,6 +260,12 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+
+    def _safe_log(self, *args, **kwargs):
+        try:
+            print("[JugiAI]", *args, **kwargs)
+        except Exception:
+            pass
 
     # --- UI ---
     def _ensure_profiles(self) -> None:
@@ -802,6 +817,10 @@ class JugiAIApp(tk.Tk):
 
     # --- Events ---
     def on_send(self) -> None:
+        # Prevent multiple simultaneous sends
+        if self._is_sending:
+            return
+            
         text = self.input.get("1.0", tk.END).strip()
         attachments = [att.copy() for att in self.pending_attachments]
         if not text and not attachments:
@@ -832,6 +851,7 @@ class JugiAIApp(tk.Tk):
         self.pending_attachments = []
         self._refresh_attachment_chips()
 
+        self._is_sending = True
         self.set_busy(True)
         self.current_stream_timestamp = self._timestamp_now()
         self.start_assistant_stream(self.current_stream_timestamp)
@@ -863,6 +883,7 @@ class JugiAIApp(tk.Tk):
             msg = str(e)
             self.after(0, lambda m=msg: self.handle_stream_failure(m))
             self.after(0, lambda: self.set_busy(False))
+            self.after(0, lambda: setattr(self, '_is_sending', False))
             self.current_stream_timestamp = None
             return
 
@@ -881,6 +902,7 @@ class JugiAIApp(tk.Tk):
         self.after(0, self.save_history)
         self.after(0, self._update_overview_metrics)
         self.after(0, lambda: self.set_busy(False))
+        self.after(0, lambda: setattr(self, '_is_sending', False))
         self.current_stream_timestamp = None
 
     def stream_model_backend(self) -> Generator[str, None, None]:
@@ -1338,15 +1360,42 @@ class JugiAIApp(tk.Tk):
         prompt_txt.insert("1.0", self.config_dict.get("system_prompt", DEFAULT_CONFIG["system_prompt"]))
         prompt_txt.grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         row += 1
+        def _bind_scale_readout(var: tk.DoubleVar, target: tk.StringVar, fmt: str = "{:.2f}") -> None:
+            def _sync(*_args: Any) -> None:
+                try:
+                    value = float(var.get())
+                except Exception:
+                    value = 0.0
+                target.set(fmt.format(value))
+
+            var.trace_add("write", _sync)
+            _sync()
+
         ttk.Label(g, text="Temperature (0–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         temp_var = tk.DoubleVar(value=float(self.config_dict.get("temperature", 0.7)))
         ttk.Scale(g, from_=0.0, to=2.0, variable=temp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        temp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=temp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(temp_var, temp_readout, "{:.2f}")
         row += 1
         ttk.Label(g, text="Säätelee luovuuden ja satunnaisuuden määrää.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="top_p (0–1):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         top_p_var = tk.DoubleVar(value=float(self.config_dict.get("top_p", 1.0)))
         ttk.Scale(g, from_=0.0, to=1.0, variable=top_p_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        top_p_readout = tk.StringVar()
+        ttk.Label(g, textvariable=top_p_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(top_p_var, top_p_readout, "{:.2f}")
         row += 1
         ttk.Label(g, text="Rajoittaa todennäköisyysmassaa – pienempi arvo keskittyy varmoihin vastauksiin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
@@ -1359,17 +1408,34 @@ class JugiAIApp(tk.Tk):
         ttk.Label(g, text="presence_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         pp_var = tk.DoubleVar(value=float(self.config_dict.get("presence_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=pp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        pp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=pp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(pp_var, pp_readout, "{:+.2f}")
         row += 1
         ttk.Label(g, text="Kannustaa uusiin aiheisiin – suurempi arvo vähentää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="frequency_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         fp_var = tk.DoubleVar(value=float(self.config_dict.get("frequency_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=fp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        fp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=fp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(fp_var, fp_readout, "{:+.2f}")
         row += 1
         ttk.Label(g, text="Vähentää saman sanan toistumista useita kertoja peräkkäin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         for i in range(2):
             g.columnconfigure(i, weight=1)
+        g.columnconfigure(2, weight=0)
 
         # OpenAI tab
         o = tab_openai
@@ -1561,27 +1627,67 @@ class JugiAIApp(tk.Tk):
         if respect_visibility and not self.config_dict.get("show_background", True):
             self._remove_watermark_overlay()
             return
+        
+        try:
+            from PIL import Image
+            pil_available = True
+        except Exception:
+            pil_available = False
+            try:
+                self._safe_log("Pillow (PIL) is not installed. Watermark disabled. Install Pillow to enable watermark features.")
+            except Exception:
+                print("[JugiAI] Pillow (PIL) missing; watermark disabled.")
+        
         path = self._resolve_default_logo()
         if not path:
             self._remove_watermark_overlay()
+            if pil_available:
+                try:
+                    self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+                except Exception:
+                    pass
             return
+        
+        if not os.path.isfile(path):
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log(f"Watermark file not found at {path!r}; continuing without watermark.")
+            except Exception:
+                pass
+            return
+        
         try:
             raw_img = tk.PhotoImage(file=path)
         except Exception:
             self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
             return
-        subs = int(self.config_dict.get("background_subsample", 2))
-        subs = max(1, min(8, subs))
+        
         try:
-            scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            subs = int(self.config_dict.get("background_subsample", 2))
+            subs = max(1, min(8, subs))
+            try:
+                scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            except Exception:
+                scaled = raw_img
+            opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            processed = self._apply_watermark_opacity(scaled, opacity_val)
+            self._wm_raw_img = raw_img
+            self._wm_scaled_img = scaled
+            self._wm_img = processed
         except Exception:
-            scaled = raw_img
-        opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
-        opacity_val = max(0.0, min(1.0, opacity_val))
-        processed = self._apply_watermark_opacity(scaled, opacity_val)
-        self._wm_raw_img = raw_img
-        self._wm_scaled_img = scaled
-        self._wm_img = processed
+            self._remove_watermark_overlay()
+            try:
+                self._safe_log("Failed to load/process watermark; continuing without watermark.")
+                self._safe_log(traceback.format_exc())
+            except Exception:
+                pass
+            return
 
     def _insert_watermark_if_needed(self) -> None:
         if not self._wm_img:
@@ -1677,29 +1783,93 @@ class JugiAIApp(tk.Tk):
         self._position_watermark_overlay()
 
     def _apply_watermark_opacity(self, img: tk.PhotoImage, opacity: float) -> tk.PhotoImage:
-        opacity = max(0.0, min(1.0, float(opacity)))
+        """
+        Apply an opacity factor to a tk.PhotoImage.
+        Uses PIL/Pillow for better performance and reliability when available,
+        otherwise falls back to pixel-by-pixel manipulation.
+        - img: tk.PhotoImage
+        - opacity: numeric or string representing 0..1 (or 0..100 as percent)
+        Returns a tk.PhotoImage with opacity applied.
+        """
+        # Normalize opacity to float 0..1
+        try:
+            opacity_val = float(opacity)
+        except Exception:
+            # If someone passed "50" meaning 50%, normalize
+            try:
+                opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
+            except Exception:
+                opacity_val = 1.0
+
+        # If user gave 0..100 scale, convert
+        if opacity_val > 1.0:
+            opacity_val = max(0.0, min(100.0, opacity_val)) / 100.0
+
+        opacity_val = max(0.0, min(1.0, opacity_val))
+
+        # If opacity is essentially 1.0, just return a copy
+        if opacity_val >= 0.999:
+            try:
+                opacity_val = float(opacity)
+            except Exception:
+                return img
+
+        # Try PIL/Pillow approach for better performance
+        if PIL_AVAILABLE:
+            try:
+                # Convert tk.PhotoImage to PIL Image
+                # Get dimensions
+                width = img.width()
+                height = img.height()
+                
+                # Create a PIL image from tk.PhotoImage pixel data
+                # We need to get the data in a format PIL can use
+                pil_img = Image.new('RGBA', (width, height))
+                pixels = []
+                for y in range(height):
+                    for x in range(width):
+                        try:
+                            pixel = img.get(x, y)
+                            if pixel:
+                                rgb = self._hex_to_rgb(pixel)
+                                pixels.append(rgb + (255,))  # Add full alpha
+                            else:
+                                pixels.append((11, 18, 32, 255))
+                        except Exception:
+                            pixels.append((11, 18, 32, 255))
+                pil_img.putdata(pixels)
+                
+                # Apply opacity by modifying alpha channel
+                r, g, b, a = pil_img.split()
+                a = a.point(lambda v: int(v * opacity_val))
+                pil_img = Image.merge('RGBA', (r, g, b, a))
+                
+                # Convert back to tk.PhotoImage
+                return ImageTk.PhotoImage(pil_img)
+            except Exception:
+                # Fall through to fallback implementation
+                pass
+
+        # Fallback: pixel-by-pixel manipulation (original implementation)
         try:
             width = img.width()
             height = img.height()
         except Exception:
             return img
-        if opacity >= 0.999:
-            try:
-                return img.copy()
-            except Exception:
-                return img
+            
         bg_color = "#0b1220"
         try:
             bg_color = self.chat.cget("bg")
         except Exception:
             pass
+            
         bg_rgb = self._hex_to_rgb(bg_color)
         result = tk.PhotoImage(width=width, height=height)
         for y in range(height):
             row_colors = []
             for x in range(width):
                 try:
-                    pixel = img.get(x, y)
+                    opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
                 except Exception:
                     pixel = bg_color
                 if not pixel:
@@ -1707,26 +1877,63 @@ class JugiAIApp(tk.Tk):
                 else:
                     rgb = self._hex_to_rgb(pixel)
                     blended_rgb = (
-                        int(rgb[0] * opacity + bg_rgb[0] * (1.0 - opacity)),
-                        int(rgb[1] * opacity + bg_rgb[1] * (1.0 - opacity)),
-                        int(rgb[2] * opacity + bg_rgb[2] * (1.0 - opacity)),
+                        int(rgb[0] * opacity_val + bg_rgb[0] * (1.0 - opacity_val)),
+                        int(rgb[1] * opacity_val + bg_rgb[1] * (1.0 - opacity_val)),
+                        int(rgb[2] * opacity_val + bg_rgb[2] * (1.0 - opacity_val)),
                     )
                 row_colors.append(self._rgb_to_hex(blended_rgb))
             result.put("{" + " ".join(row_colors) + "}", to=(0, y))
         return result
 
-    def _hex_to_rgb(self, value: str) -> tuple[int, int, int]:
-        value = (value or "").strip()
-        if value.startswith("#") and len(value) == 7:
+    def _hex_to_rgb(self, value: str | tuple | list) -> tuple[int, int, int]:
+        """
+        Convert a color value to an (r, g, b) tuple (0..255).
+        Accepts:
+          - tuple/list: (r,g,b) or (r,g,b,a) -> uses first three elements
+          - hex string: '#RRGGBB', 'RRGGBB', '#RGB', 'RGB'
+          - numeric/other strings: attempts conversion via str()
+        Returns a default dark blue (11, 18, 32) for invalid inputs.
+        """
+        # If tuple/list already, take first 3 numeric components
+        if isinstance(value, (tuple, list)):
+            if len(value) < 3:
+                return (11, 18, 32)
             try:
-                return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))
+                r, g, b = int(value[0]), int(value[1]), int(value[2])
+                return (r, g, b)
             except Exception:
-                pass
+                return (11, 18, 32)
+
+        # None check
+        if value is None:
+            return (11, 18, 32)
+
+        s = str(value).strip()
+        if not s:
+            return (11, 18, 32)
+            
+        if s.startswith('#'):
+            s = s[1:]
+
+        # Short-hand rgb e.g. 'f0a' -> 'ff00aa'
+        if len(s) == 3:
+            s = ''.join(ch * 2 for ch in s)
+
+        if len(s) != 6:
+            # Try winfo_rgb as fallback for named colors
+            try:
+                r, g, b = self.winfo_rgb(value)
+                return r // 256, g // 256, b // 256
+            except Exception:
+                return (11, 18, 32)
+
         try:
-            r, g, b = self.winfo_rgb(value)
-            return r // 256, g // 256, b // 256
+            r = int(s[0:2], 16)
+            g = int(s[2:4], 16)
+            b = int(s[4:6], 16)
+            return (r, g, b)
         except Exception:
-            return 11, 18, 32
+            return (11, 18, 32)
 
     def _rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
         r, g, b = rgb
