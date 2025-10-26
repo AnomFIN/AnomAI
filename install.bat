@@ -1,161 +1,105 @@
 @echo off
-:: Robust install.bat for Windows
-:: - Finds python (python3 then python)
-:: - Ensures pip (uses ensurepip if necessary)
-:: - Optionally creates a venv
-:: - Installs requirements.txt
-:: - Optionally installs PyInstaller and builds a single-file .exe of jugiai.py (with user's consent)
-
 setlocal enabledelayedexpansion
 
-REM Helper: print error and pause
-:errpause
-echo.
-echo ERROR: %~1
-pause
-exit /b 1
+echo --- Install script for AnomAI (Windows) ---
 
-REM Find python interpreter
-where python3 >nul 2>&1
-if %ERRORLEVEL%==0 (
-  set "PY=python3"
+REM Try to find Python 3 executable
+where python >nul 2>&1
+if %errorlevel%==0 (
+  set "PY_CMD=python"
 ) else (
-  where python >nul 2>&1
-  if %ERRORLEVEL%==0 (
-    set "PY=python"
+  where py >nul 2>&1
+  if %errorlevel%==0 (
+    set "PY_CMD=py -3"
   ) else (
-    call :errpause "Python 3 not found on PATH. Install Python 3.9+ and re-run. See https://www.python.org/downloads/"
-  )
-)
-
-echo Using %PY%
-
-REM Ensure pip is available
-"%PY%" -m pip --version >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-  echo pip not found. Attempting to bootstrap pip via ensurepip...
-  "%PY%" -m ensurepip --upgrade >nul 2>&1
-  if %ERRORLEVEL% neq 0 (
-    echo Failed to bootstrap pip automatically.
-    echo You can install pip manually: "%PY%" -m ensurepip --upgrade
-    pause
+    echo ERROR: Python 3 is not installed or not on PATH.
+    echo Please install Python 3.8+ from https://www.python.org/downloads/ and re-run this script.
+    call :maybe_pause
+    endlocal
     exit /b 1
   )
-  REM Re-check
-  "%PY%" -m pip --version >nul 2>&1
-  if %ERRORLEVEL% neq 0 (
-    call :errpause "pip still not available after ensurepip."
-  )
 )
 
-REM Optionally create a venv
-set /p USE_VENV="Create and use a virtual environment? [Y/n] "
-if /i "%USE_VENV%"=="Y" goto create_venv
-if /i "%USE_VENV%"=="" goto create_venv
+REM Get Python major.minor version
+for /f "usebackq delims=" %%V in (`%PY_CMD% -c "import sys; print('.'.join(map(str, sys.version_info[:2])))" 2^>nul`) do set "PY_VER=%%V"
+if "%PY_VER%"=="" (
+  echo ERROR: Could not determine Python version with %PY_CMD%.
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
 
-goto install_reqs
+for /f "tokens=1 delims=." %%A in ("%PY_VER%") do set "PY_MAJOR=%%A"
+for /f "tokens=2 delims=." %%B in ("%PY_VER%") do set "PY_MINOR=%%B"
 
-:create_venv
-if exist ".venv" (
-  echo Existing .venv found. Reusing.
-) else (
+echo Detected Python version %PY_VER% using %PY_CMD%.
+
+REM Require Python >= 3.8
+if %PY_MAJOR% LSS 3 (
+  echo ERROR: Python 3.x is required.
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
+if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 8 (
+  echo ERROR: Python 3.8+ is required. Detected %PY_VER%.
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
+
+REM Create virtual environment
+if not exist ".venv\Scripts\activate" (
   echo Creating virtual environment in .venv...
-  "%PY%" -m venv .venv
-  if %ERRORLEVEL% neq 0 (
-    echo Failed to create venv. Continuing with system python.
-    goto install_reqs
+  %PY_CMD% -m venv .venv
+  if %errorlevel% neq 0 (
+    echo ERROR: Failed to create virtual environment.
+    call :maybe_pause
+    endlocal
+    exit /b 1
   )
-)
-REM Activate venv for the rest of the script
-call .venv\Scripts\activate.bat
-if %ERRORLEVEL% neq 0 (
-  echo Warning: could not activate .venv; attempting to use it directly.
 ) else (
-  set "PY=%~dp0.venv\Scripts\python.exe"
+  echo Using existing virtual environment .venv
 )
 
-:install_reqs
-echo Upgrading pip...
-"%PY%" -m pip install --upgrade pip setuptools wheel
+call ".venv\Scripts\activate"
 
+REM Upgrade pip, setuptools, wheel to avoid build issues (e.g., Pillow)
+echo Upgrading pip, setuptools and wheel...
+python -m pip install --upgrade pip setuptools wheel
+if %errorlevel% neq 0 (
+  echo ERROR: Failed to upgrade pip/setuptools/wheel.
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
+
+REM Install requirements if file exists
 if exist requirements.txt (
   echo Installing requirements from requirements.txt...
-  "%PY%" -m pip install -r requirements.txt
-  if %ERRORLEVEL% neq 0 (
-    echo Failed to install some requirements. You can try manually:
-    echo %PY% -m pip install -r requirements.txt
-    pause
+  python -m pip install -r requirements.txt
+  if %errorlevel% neq 0 (
+    echo ERROR: pip install failed. See output above.
+    call :maybe_pause
+    endlocal
+    exit /b 1
   )
 ) else (
-  echo requirements.txt not found, skipping.
+  echo No requirements.txt found — skipping pip install step.
 )
 
-REM Ask user about building an .exe with PyInstaller
-set /p BUILD_EXE="Do you want to build a single-file .exe using PyInstaller? [y/N] "
-
-if /i "%BUILD_EXE%"=="y" (
-  echo Checking for PyInstaller...
-  "%PY%" -m pip show pyinstaller >nul 2>&1
-  if %ERRORLEVEL% neq 0 (
-    set /p INSTALL_PYI="PyInstaller is not installed. Install it now? [Y/n] "
-    if /i "%INSTALL_PYI%"=="Y" goto install_pyinstaller
-    if /i "%INSTALL_PYI%"=="" goto install_pyinstaller
-    echo Skipping .exe build.
-    goto done
-  ) else (
-    goto run_pyinstaller
-  )
-) else (
-  goto done
-)
-
-:install_pyinstaller
-echo Installing PyInstaller...
-"%PY%" -m pip install pyinstaller
-if %ERRORLEVEL% neq 0 (
-  echo Failed to install PyInstaller automatically.
-  echo Try running: %PY% -m pip install pyinstaller
-  pause
-  goto done
-)
-goto run_pyinstaller
-
-:run_pyinstaller
-echo Building single-file executable with PyInstaller...
-REM Choose entrypoint and output name
-set ENTRY=jugiai.py
-if not exist %ENTRY% (
-  echo Entry file %ENTRY% not found in current folder: %CD%
-  pause
-  goto done
-)
-set /p EXENAME="Executable name (without extension) [AnomAI]: "
-if "%EXENAME%"=="" set EXENAME=AnomAI
-
-REM Optionally include icon if make_icon or icon file exists (logo.ico)
-set ICON=""
-if exist logo.ico (
-  set ICON=--icon=logo.ico
-)
-
-REM Run PyInstaller (onefile, no console)
-"%PY%" -m PyInstaller --onefile --noconsole --name "%EXENAME%" %ICON% %ENTRY%
-if %ERRORLEVEL% neq 0 (
-  echo PyInstaller build failed.
-  echo Check the PyInstaller output above for details.
-  pause
-  goto done
-)
-
-echo Build finished.
-echo The executable will be in the "dist" folder:
-echo %CD%\dist\%EXENAME%.exe
-pause
-goto done
-
-:done
-echo Installation / build finished.
-echo You can run the app with:
-echo %PY% jugiai.py
-pause
+echo ---
+echo Install completed successfully.
+echo To activate the virtual environment later:
+echo    .venv\Scripts\activate
+echo Run your scripts with the activated environment (python ...).
+call :maybe_pause
 endlocal
+exit /b 0
+
+:maybe_pause
+REM Skip pause when running in CI or in non-interactive builds
+if /I "%CI%"=="true" goto :eof
+if "%BUILD_NONINTERACTIVE%"=="1" goto :eof
+pause
+goto :eof
