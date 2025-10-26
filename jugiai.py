@@ -1338,15 +1338,42 @@ class JugiAIApp(tk.Tk):
         prompt_txt.insert("1.0", self.config_dict.get("system_prompt", DEFAULT_CONFIG["system_prompt"]))
         prompt_txt.grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         row += 1
+        def _bind_scale_readout(var: tk.DoubleVar, target: tk.StringVar, fmt: str = "{:.2f}") -> None:
+            def _sync(*_args: Any) -> None:
+                try:
+                    value = float(var.get())
+                except Exception:
+                    value = 0.0
+                target.set(fmt.format(value))
+
+            var.trace_add("write", _sync)
+            _sync()
+
         ttk.Label(g, text="Temperature (0–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         temp_var = tk.DoubleVar(value=float(self.config_dict.get("temperature", 0.7)))
         ttk.Scale(g, from_=0.0, to=2.0, variable=temp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        temp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=temp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(temp_var, temp_readout, "{:.2f}")
         row += 1
         ttk.Label(g, text="Säätelee luovuuden ja satunnaisuuden määrää.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="top_p (0–1):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         top_p_var = tk.DoubleVar(value=float(self.config_dict.get("top_p", 1.0)))
         ttk.Scale(g, from_=0.0, to=1.0, variable=top_p_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        top_p_readout = tk.StringVar()
+        ttk.Label(g, textvariable=top_p_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(top_p_var, top_p_readout, "{:.2f}")
         row += 1
         ttk.Label(g, text="Rajoittaa todennäköisyysmassaa – pienempi arvo keskittyy varmoihin vastauksiin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
@@ -1359,17 +1386,34 @@ class JugiAIApp(tk.Tk):
         ttk.Label(g, text="presence_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         pp_var = tk.DoubleVar(value=float(self.config_dict.get("presence_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=pp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        pp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=pp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(pp_var, pp_readout, "{:+.2f}")
         row += 1
         ttk.Label(g, text="Kannustaa uusiin aiheisiin – suurempi arvo vähentää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="frequency_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         fp_var = tk.DoubleVar(value=float(self.config_dict.get("frequency_penalty", 0.0)))
         ttk.Scale(g, from_=-2.0, to=2.0, variable=fp_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        fp_readout = tk.StringVar()
+        ttk.Label(g, textvariable=fp_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        _bind_scale_readout(fp_var, fp_readout, "{:+.2f}")
         row += 1
         ttk.Label(g, text="Vähentää saman sanan toistumista useita kertoja peräkkäin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         for i in range(2):
             g.columnconfigure(i, weight=1)
+        g.columnconfigure(2, weight=0)
 
         # OpenAI tab
         o = tab_openai
