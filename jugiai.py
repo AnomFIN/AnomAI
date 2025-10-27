@@ -192,6 +192,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+def _log_warning(message: str) -> None:
+    """Simple console warning logger for watermark and other non-critical errors."""
+    print(f"[WARNING] {message}", flush=True)
+
+
 class JugiAIApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -206,6 +211,7 @@ class JugiAIApp(tk.Tk):
         self._wm_raw_img = None
         self._wm_scaled_img = None
         self._wm_overlay: tk.Label | None = None
+        self.watermark_enabled = True  # Flag to track if watermark loading is available
         self.llm = None
         self.llm_model_path = None
 
@@ -1719,10 +1725,15 @@ class JugiAIApp(tk.Tk):
             pass
 
     def _load_watermark_image(self, respect_visibility: bool = True) -> None:
+        """
+        Load watermark image with comprehensive error handling.
+        If any error occurs, logs a warning and disables watermark instead of crashing.
+        """
         self._wm_img = None
         self._wm_raw_img = None
         self._wm_scaled_img = None
-        if respect_visibility and not self.config_dict.get("show_background", True):
+        
+        if not self.watermark_enabled:
             self._remove_watermark_overlay()
             return
         
@@ -1755,8 +1766,57 @@ class JugiAIApp(tk.Tk):
             return
         
         try:
-            raw_img = tk.PhotoImage(file=path)
-        except Exception:
+            path = self._resolve_default_logo()
+            if not path:
+                self._remove_watermark_overlay()
+                return
+                
+            if not os.path.exists(path):
+                _log_warning(f"Watermark image file not found: {path}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+                
+            try:
+                raw_img = tk.PhotoImage(file=path)
+            except tk.TclError as e:
+                _log_warning(f"Failed to load watermark image (TclError): {e}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+            except Exception as e:
+                _log_warning(f"Failed to load watermark image: {e}")
+                self.watermark_enabled = False
+                self._remove_watermark_overlay()
+                return
+                
+            subs = int(self.config_dict.get("background_subsample", 2))
+            subs = max(1, min(8, subs))
+            try:
+                scaled = raw_img.subsample(subs, subs) if subs > 1 else raw_img.copy()
+            except Exception as e:
+                _log_warning(f"Failed to subsample watermark image: {e}")
+                scaled = raw_img
+                
+            opacity_val = float(self.config_dict.get("background_opacity", DEFAULT_CONFIG["background_opacity"]))
+            opacity_val = max(0.0, min(1.0, opacity_val))
+            
+            try:
+                processed = self._apply_watermark_opacity(scaled, opacity_val)
+            except Exception as e:
+                _log_warning(f"Failed to apply watermark opacity: {e}")
+                processed = scaled
+                
+            self._wm_raw_img = raw_img
+            self._wm_scaled_img = scaled
+            self._wm_img = processed
+            
+        except Exception as e:
+            _log_warning(f"Unexpected error loading watermark, continuing without it: {e}")
+            self.watermark_enabled = False
+            self._wm_img = None
+            self._wm_raw_img = None
+            self._wm_scaled_img = None
             self._remove_watermark_overlay()
             try:
                 self._safe_log("Failed to load/process watermark; continuing without watermark.")
@@ -1909,7 +1969,8 @@ class JugiAIApp(tk.Tk):
         if opacity_val >= 0.999:
             try:
                 return img.copy()
-            except Exception:
+            except Exception as e:
+                _log_warning(f"Failed to copy image: {e}")
                 return img
 
         # Try PIL/Pillow approach for better performance
