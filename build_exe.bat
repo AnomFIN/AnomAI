@@ -1,6 +1,8 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
+set "BUILD_STATUS=FAIL"
+
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%"
 
@@ -178,9 +180,17 @@ if /I "%BUILD_STATUS%"=="OK" (
 )
 echo ======================================================
 
+call :maybe_pause
+
 goto :cleanup
 
 :cleanup
 popd
 endlocal
 exit /b
+
+:maybe_pause
+if /I "%CI%"=="true" goto :eof
+if "%BUILD_NONINTERACTIVE%"=="1" goto :eof
+pause
+goto :eof

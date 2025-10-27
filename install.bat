@@ -76,7 +76,7 @@ if %errorlevel% neq 0 (
 
 REM Install requirements if file exists
 if exist requirements.txt (
-  echo Installing requirements from requirements.txt...
+echo Installing requirements from requirements.txt...
   python -m pip install -r requirements.txt
   if %errorlevel% neq 0 (
     echo ERROR: pip install failed. See output above.
@@ -88,10 +88,27 @@ if exist requirements.txt (
   echo No requirements.txt found — skipping pip install step.
 )
 
+echo.
+set "INSTALL_LLAMA="
+set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y):
+if /I "%INSTALL_LLAMA%"=="N" (
+  echo Skipping llama-cpp-python installation at user request.
+) else (
+  echo Installing llama-cpp-python with --prefer-binary (this may take a moment)...
+  python -m pip install --upgrade --prefer-binary llama-cpp-python
+  if %errorlevel% neq 0 (
+    echo WARNING: llama-cpp-python installation failed. You can retry manually with:
+    echo   %PY_CMD% -m pip install --upgrade --prefer-binary llama-cpp-python
+    echo or follow Windows-specific wheel instructions from the README.
+  ) else (
+    echo Local model support ready (llama-cpp-python installed).
+  )
+)
+
 echo ---
 echo Install completed successfully.
 echo To activate the virtual environment later:
-echo    .venv\Scripts\activate
+echo    .\.venv\Scripts\activate
 echo Run your scripts with the activated environment (python ...).
 call :maybe_pause
 endlocal

@@ -20,8 +20,8 @@ Asennusohjelma käy läpi seuraavat vaiheet ja pitää ikkunan auki myös virhet
 
 1. **Käynnistä asennus** kaksoisklikkaamalla `install.bat`. Konsolin koodisivu vaihtuu automaattisesti UTF-8-muotoon, joten ääkköset näkyvät oikein.
 2. **Pythonin tunnistus ja tarkistus.** Skripti etsii asennetun Pythonin (`py -3`, `python`, `python3`) ja varmistaa, että versio on vähintään 3.9. Halutessasi voit syöttää oman polun.
-3. **Virtuaaliympäristö (valinnainen).** Voit luoda automaattisesti `venv`-kansion. Jos luonti epäonnistuu, jatketaan suoraan järjestelmän Pythonilla.
-4. **Pip ja riippuvuudet.** Pip päivitetään (valinnainen) ja sinulta kysytään, haluatko asentaa paikallisen LLM-tuen (`llama-cpp-python --prefer-binary`). Kaikki asennuskomennot on suojattu uudelleenyritysluopeilla – epäonnistuminen ei kaada ikkunaa, vaan tarjoaa mahdollisuuden yrittää uudelleen tai ohittaa valinnaisen vaiheen.
+3. **Virtuaaliympäristö `.venv`.** Projektiin luodaan automaattisesti `.venv`-kansio. Jos luonti epäonnistuu, jatketaan suoraan järjestelmän Pythonilla, mutta suosittelemme käyttämään virtuaaliympäristöä.
+4. **Pip ja riippuvuudet.** Pip päivitetään ja `requirements.txt` asennetaan. Tämän jälkeen skripti kysyy, haluatko asentaa paikallisen LLM-tuen (`llama-cpp-python --prefer-binary`). Kaikki asennuskomennot jatkavat virhetilanteissa, jotta voit yrittää uudelleen tai ohittaa vaiheen hallitusti.
 5. **JugiAI:n konfigurointi.** Vastaa ohjattuun lomakkeeseen (API-avain, malli, lämpötila, taustakuva-asetukset jne.). Tiedot tallennetaan `config.json`-tiedostoon, ja tyhjä `history.json` luodaan automaattisesti.
 6. **AnomAI.exe:n generointi.** Skripti asentaa PyInstaller-riippuvuudet, muuntaa `logo.png` → `logo.ico`, koostaa `AnomAI.exe`-tiedoston ja kopioi sen projektin juureen. Samalla tuotetaan `dist\AnomAI`-hakemisto ja jakopaketti `AnomAI_Windows.zip`.
 7. **Pikakuvake työpöydälle.** Powershell-komento luo `AnomAI.lnk`-pikakuvakkeen työpöydällesi ja käyttää automaattisesti `logo.ico`-ikonia. Mahdolliset virheet (esim. jos työpöytää ei löydy) raportoidaan.
@@ -32,8 +32,27 @@ Asennusohjelma käy läpi seuraavat vaiheet ja pitää ikkunan auki myös virhet
 ## 3. Ensimmäinen käynnistys
 
 1. **Käytä työpöydän `AnomAI`-pikakuvaketta** tai kaksoisklikkaa projektin juureen kopioitua `AnomAI.exe` -tiedostoa.
-2. Vaihtoehtoisesti voit käynnistää `start_jugiai.bat`-tiedoston. Se yrittää ensin avata `AnomAI.exe`-tiedoston ja palaa tarvittaessa Python-versioon (virtuaaliympäristö → `pythonw` → `py -3` → `python`).
+2. Vaihtoehtoisesti voit käynnistää `start_jugiai.bat`-tiedoston. Se yrittää ensin avata `AnomAI.exe`-tiedoston ja palaa tarvittaessa Python-versioon (virtuaaliympäristö `.venv` → `pythonw` → `py -3` → `python`).
 3. Kun sovellus avautuu, ⚙️-kuvakkeen takaa löytyy Asetukset-paneeli, jossa voit hienosäätää profiilia sekä valita paikallisen mallin, jos `llama-cpp-python` asennettiin.
+
+### Virtuaaliympäristön aktivointi käsin
+
+Jos haluat käyttää komentoriviä suoraan (esimerkiksi asentaaksesi lisäkirjastoja), aktivoi sama virtuaaliympäristö, jonka `install.bat` loi:
+
+```powershell
+cd C:\Polku\AnomAI
+Set-ExecutionPolicy -Scope Process RemoteSigned  # tarvittaessa
+\.venv\Scripts\Activate.ps1   # PowerShell
+```
+
+Komentokehotteessa (`cmd.exe`) vastaava komento on:
+
+```cmd
+cd C:\Polku\AnomAI
+\.venv\Scripts\activate
+```
+
+Aktivoinnin jälkeen `python` ja `pip` viittaavat automaattisesti oikeaan ympäristöön, joten paikallisen mallin tuki ja Pillow pysyvät käytettävissä.
 
 ---
 
@@ -52,10 +71,11 @@ Asennusohjelma käy läpi seuraavat vaiheet ja pitää ikkunan auki myös virhet
 
 | Ongelma | Syy | Ratkaisu |
 | --- | --- | --- |
-| `llama-cpp-python` asennus epäonnistuu (CMake-virheet) | Windowsilta puuttuu rakennustyökalut tai sopiva pyörä | Asenna [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), valitse `Retry` asennusohjelmassa tai kirjoita `E` ohittaaksesi paikallisen mallin tuen. Etä-API toimii silti. |
+| `llama-cpp-python` asennus epäonnistuu (CMake-virheet) | Windowsilta puuttuu rakennustyökalut tai sopiva pyörä | Asenna [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) ja yritä `install.bat`:in ehdottamaa komentoa uudelleen. Vaihtoehtoisesti hae valmis binääripyörä osoitteesta [abetlen/llama-cpp-python releases](https://github.com/abetlen/llama-cpp-python/releases). Etä-API toimii silti ilman paikallista mallia. |
 | Pikakuvaketta ei synny | Työpöydän polku ei ollut PowerShellin saatavilla | Luo pikakuvake manuaalisesti: hiiren oikea `AnomAI.exe` → **Lähetä** → **Työpöytä (luo pikakuvake)**. |
 | `start_jugiai.bat` ei löydä Pythonia | Python puuttuu tai PATH-ympäristömuuttuja ei sisällä sitä | Asenna Python 3.9+ ja varmista, että asennuksen lopussa valitset “Add python.exe to PATH”, tai käynnistä `AnomAI.exe` suoraan. |
 | Sovellus ei yhdistä OpenAI:hin | Virheellinen API-avain tai malli | Avaa ⚙️ Asetukset → OpenAI-välilehti, syötä toimiva avain ja malli (esim. `gpt-4o-mini`). |
+| `AnomAI.exe` sulkeutuu heti | Taustalla tapahtui poikkeus (esim. `llama-cpp-python` puuttuu nykyisestä ympäristöstä) | Katso virheilmoituksen kertoma polku `jugiai_error.log`-tiedostoon. Lokissa näkyy tarkka traceback ja käytetty Python-polku. Korjaa syy (esim. suorita `"%CD%\.venv\Scripts\python.exe" -m pip install --upgrade --prefer-binary llama-cpp-python`) ja käynnistä uudelleen. |
 
 ---
 
