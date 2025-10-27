@@ -1,7 +1,4 @@
 @echo off
-rem UTF-8 wrapper for install.bat
-rem Sets UTF-8 code page and calls the main installer
-
+:: Switch to UTF-8 code page and delegate to install.bat
 chcp 65001 >nul
-call "%~dp0install.bat" %*
-exit /b %ERRORLEVEL%
+call "%~dp0install.bat"

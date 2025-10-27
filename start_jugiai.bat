@@ -17,8 +17,8 @@ if exist "%SCRIPT_DIR%dist\AnomAI\AnomAI.exe" (
   goto :done
 )
 
-set "VENV_PYTHONW=%SCRIPT_DIR%venv\Scripts\pythonw.exe"
-set "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
+set "VENV_PYTHONW=%SCRIPT_DIR%\.venv\Scripts\pythonw.exe"
+set "VENV_PYTHON=%SCRIPT_DIR%\.venv\Scripts\python.exe"
 
 if exist "%VENV_PYTHONW%" (
   "%VENV_PYTHONW%" "%SCRIPT_DIR%jugiai.py"
