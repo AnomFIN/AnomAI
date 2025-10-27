@@ -20,11 +20,17 @@ if %errorlevel%==0 (
   )
 )
 
-REM Get Python major.minor version and architecture in a safe way (avoid backtick/subshell parsing issues)
+REM Get Python major.minor version and architecture using a temporary .py to avoid inline quoting issues
 set "TEMP_INFO=%TEMP%\anomai_pyinfo.txt"
+set "TEMP_PY=%TEMP%\anomai_pyinfo.py"
 if exist "%TEMP_INFO%" del "%TEMP_INFO%" >nul 2>&1
+if exist "%TEMP_PY%" del "%TEMP_PY%" >nul 2>&1
 
-"%PY_CMD%" -c "import sys, struct; print('.'.join(map(str, sys.version_info[:2]))); print(struct.calcsize('P')*8)" > "%TEMP_INFO%" 2>nul
+> "%TEMP_PY%" echo import sys, struct
+>> "%TEMP_PY%" echo print('.'.join(map(str, sys.version_info[:2])))
+>> "%TEMP_PY%" echo print(struct.calcsize('P')*8)
+
+"%PY_CMD%" "%TEMP_PY%" > "%TEMP_INFO%" 2>nul
 
 set "PY_VER="
 set "PY_BITS="
@@ -38,6 +44,7 @@ if exist "%TEMP_INFO%" (
   )
   del "%TEMP_INFO%" >nul 2>&1
 )
+if exist "%TEMP_PY%" del "%TEMP_PY%" >nul 2>&1
 
 if "%PY_VER%"=="" (
   echo ERROR: Could not determine Python version with %PY_CMD%.
