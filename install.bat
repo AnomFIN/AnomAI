@@ -20,8 +20,25 @@ if %errorlevel%==0 (
   )
 )
 
-REM Get Python major.minor version
-for /f "usebackq delims=" %%V in (`%PY_CMD% -c "import sys; print('.'.join(map(str, sys.version_info[:2])))" 2^>nul`) do set "PY_VER=%%V"
+REM Get Python major.minor version and architecture in a safe way (avoid backtick/subshell parsing issues)
+set "TEMP_INFO=%TEMP%\anomai_pyinfo.txt"
+if exist "%TEMP_INFO%" del "%TEMP_INFO%" >nul 2>&1
+
+"%PY_CMD%" -c "import sys, struct; print('.'.join(map(str, sys.version_info[:2]))); print(struct.calcsize('P')*8)" > "%TEMP_INFO%" 2>nul
+
+set "PY_VER="
+set "PY_BITS="
+if exist "%TEMP_INFO%" (
+  for /f "usebackq delims=" %%V in ("%TEMP_INFO%") do (
+    if not defined PY_VER (
+      set "PY_VER=%%V"
+    ) else if not defined PY_BITS (
+      set "PY_BITS=%%V"
+    )
+  )
+  del "%TEMP_INFO%" >nul 2>&1
+)
+
 if "%PY_VER%"=="" (
   echo ERROR: Could not determine Python version with %PY_CMD%.
   call :maybe_pause
@@ -31,8 +48,6 @@ if "%PY_VER%"=="" (
 
 for /f "tokens=1 delims=." %%A in ("%PY_VER%") do set "PY_MAJOR=%%A"
 for /f "tokens=2 delims=." %%B in ("%PY_VER%") do set "PY_MINOR=%%B"
-
-for /f "usebackq delims=" %%B in (`%PY_CMD% -c "import struct; print(struct.calcsize('P')*8)" 2^>nul`) do set "PY_BITS=%%B"
 
 echo Detected Python version %PY_VER% using %PY_CMD%.
 if not "%PY_BITS%"=="" echo Detected architecture: %PY_BITS%-bit.
