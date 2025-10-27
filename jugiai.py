@@ -15,6 +15,7 @@ import base64
 import json
 import mimetypes
 import os
+import sys
 import threading
 import time
 import tkinter as tk
@@ -24,6 +25,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Dict, Generator, List, Optional
 
+import importlib.metadata
+import importlib.util
 import urllib.error
 import urllib.request
 
@@ -37,6 +40,101 @@ except ImportError:
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
+ERROR_LOG_FILE = os.path.join(os.path.dirname(__file__), "jugiai_error.log")
+
+
+def _format_llama_import_error(exc: Exception) -> str:
+    python_hint = sys.executable or "python"
+    lines = [
+        "Paikallista mallia ei voitu alustaa, koska `llama-cpp-python`-kirjaston tuonti epäonnistui.",
+        "",
+        f"Aktiivinen Python: {python_hint}",
+    ]
+
+    spec = importlib.util.find_spec("llama_cpp")
+    if spec and getattr(spec, "origin", None):
+        lines.append(f"Yritettiin ladata moduuli: {spec.origin}")
+    else:
+        lines.append("Moduulia `llama_cpp` ei löydy tältä sys.path-polulta.")
+
+    try:
+        dist = importlib.metadata.distribution("llama-cpp-python")
+    except importlib.metadata.PackageNotFoundError:
+        lines.append("llama-cpp-python ei ole asennettuna tähän ympäristöön.")
+    except Exception as meta_exc:  # pragma: no cover - diagnostiikka
+        lines.append(f"llama-cpp-pythonin metatietojen tarkistus epäonnistui: {meta_exc}")
+    else:
+        lines.append(f"llama-cpp-python versio: {dist.version}")
+        lines.append(f"Asennushakemisto: {dist.locate_file('')}")
+
+    lines.extend(
+        [
+            "",
+            "Suositeltu korjaus:",
+            f"  \"{python_hint}\" -m pip install --upgrade --prefer-binary llama-cpp-python",
+            "",
+            f"Alkuperäinen virhe: {exc}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _write_error_log(tb_text: str) -> Optional[str]:
+    try:
+        with open(ERROR_LOG_FILE, "w", encoding="utf-8") as fh:
+            fh.write(tb_text)
+        return ERROR_LOG_FILE
+    except Exception:  # pragma: no cover - lokitus ei ole kriittinen
+        return None
+
+
+def _show_fatal_error_dialog(summary: str, details: str) -> None:
+    dialog_title = "JugiAI – Käynnistysvirhe"
+    message = summary
+    if details:
+        message = f"{summary}\n\n{details}"
+
+    temp_root: Optional[tk.Tk] = None
+    try:
+        root = tk._default_root  # type: ignore[attr-defined]
+        if root is None:
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            root = temp_root
+        messagebox.showerror(dialog_title, message, parent=root)
+    except Exception:
+        pass
+    finally:
+        if temp_root is not None:
+            try:
+                temp_root.destroy()
+            except Exception:
+                pass
+
+
+def _handle_fatal_error(exc: BaseException, app: Optional[tk.Tk] = None) -> None:
+    if app is not None:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+    tb_text = traceback.format_exc()
+    log_path = _write_error_log(tb_text)
+    summary_lines = ["JugiAI pysähtyi odottamattomaan virheeseen."]
+    if log_path:
+        summary_lines.append(f"Virheloki: {log_path}")
+    else:
+        summary_lines.append("Virhelokia ei voitu kirjoittaa – tarkista käyttöoikeudet.")
+
+    summary_text = "\n".join(summary_lines)
+    details = f"Virhe: {exc}"
+
+    print(summary_text, file=sys.stderr)
+    print(tb_text, file=sys.stderr)
+    _show_fatal_error_dialog(summary_text, details)
+
+    raise SystemExit(1)
 
 
 DEFAULT_PROFILE_NAME = "AnomFIN · AnomTools"
@@ -1016,8 +1114,8 @@ class JugiAIApp(tk.Tk):
             raise RuntimeError("Paikallista mallia ei ole valittu (.gguf). Avaa asetukset.")
         try:
             from llama_cpp import Llama
-        except Exception:
-            raise RuntimeError("Asenna paikallista mallia varten: pip install llama-cpp-python")
+        except Exception as exc:
+            raise RuntimeError(_format_llama_import_error(exc)) from exc
 
         if self.llm is None or self.llm_model_path != model_path:
             self.llm = Llama(
@@ -1793,24 +1891,24 @@ class JugiAIApp(tk.Tk):
         """
         # Normalize opacity to float 0..1
         try:
-            opacity_val = float(opacity)
+            normalized_opacity = float(opacity)
         except Exception:
             # If someone passed "50" meaning 50%, normalize
             try:
-                opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
+                normalized_opacity = float(str(opacity).strip().rstrip("%")) / 100.0
             except Exception:
-                opacity_val = 1.0
+                normalized_opacity = 1.0
 
         # If user gave 0..100 scale, convert
-        if opacity_val > 1.0:
-            opacity_val = max(0.0, min(100.0, opacity_val)) / 100.0
+        if normalized_opacity > 1.0:
+            normalized_opacity = max(0.0, min(100.0, normalized_opacity)) / 100.0
 
-        opacity_val = max(0.0, min(1.0, opacity_val))
+        opacity_val = max(0.0, min(1.0, normalized_opacity))
 
         # If opacity is essentially 1.0, just return a copy
         if opacity_val >= 0.999:
             try:
-                opacity_val = float(opacity)
+                return img.copy()
             except Exception:
                 return img
 
@@ -1830,12 +1928,12 @@ class JugiAIApp(tk.Tk):
                     for x in range(width):
                         try:
                             pixel = img.get(x, y)
-                            if pixel:
-                                rgb = self._hex_to_rgb(pixel)
-                                pixels.append(rgb + (255,))  # Add full alpha
-                            else:
-                                pixels.append((11, 18, 32, 255))
                         except Exception:
+                            pixel = None
+                        if pixel:
+                            rgb = self._hex_to_rgb(pixel)
+                            pixels.append(rgb + (255,))  # Add full alpha
+                        else:
                             pixels.append((11, 18, 32, 255))
                 pil_img.putdata(pixels)
                 
@@ -1864,22 +1962,23 @@ class JugiAIApp(tk.Tk):
             pass
             
         bg_rgb = self._hex_to_rgb(bg_color)
+        opacity_scalar = opacity_val
         result = tk.PhotoImage(width=width, height=height)
         for y in range(height):
             row_colors = []
             for x in range(width):
                 try:
-                    opacity_val = float(str(opacity).strip().rstrip('%')) / 100.0
+                    pixel = img.get(x, y)
                 except Exception:
-                    pixel = bg_color
+                    pixel = None
                 if not pixel:
                     blended_rgb = bg_rgb
                 else:
                     rgb = self._hex_to_rgb(pixel)
                     blended_rgb = (
-                        int(rgb[0] * opacity_val + bg_rgb[0] * (1.0 - opacity_val)),
-                        int(rgb[1] * opacity_val + bg_rgb[1] * (1.0 - opacity_val)),
-                        int(rgb[2] * opacity_val + bg_rgb[2] * (1.0 - opacity_val)),
+                        int(rgb[0] * opacity_scalar + bg_rgb[0] * (1.0 - opacity_scalar)),
+                        int(rgb[1] * opacity_scalar + bg_rgb[1] * (1.0 - opacity_scalar)),
+                        int(rgb[2] * opacity_scalar + bg_rgb[2] * (1.0 - opacity_scalar)),
                     )
                 row_colors.append(self._rgb_to_hex(blended_rgb))
             result.put("{" + " ".join(row_colors) + "}", to=(0, y))
@@ -1944,8 +2043,12 @@ class JugiAIApp(tk.Tk):
 
 
 def main() -> None:
-    app = JugiAIApp()
-    app.mainloop()
+    app: Optional[JugiAIApp] = None
+    try:
+        app = JugiAIApp()
+        app.mainloop()
+    except Exception as exc:
+        _handle_fatal_error(exc, app)
 
 
 if __name__ == "__main__":
