@@ -13,7 +13,7 @@ if %errorlevel%==0 (
     set "PY_CMD=py -3"
   ) else (
     echo ERROR: Python 3 is not installed or not on PATH.
-    echo Please install Python 3.8+ from https://www.python.org/downloads/ and re-run this script.
+    echo Please install Python 3.10+ (64-bit) from https://www.python.org/downloads/ and re-run this script.
     call :maybe_pause
     endlocal
     exit /b 1
@@ -32,17 +32,27 @@ if "%PY_VER%"=="" (
 for /f "tokens=1 delims=." %%A in ("%PY_VER%") do set "PY_MAJOR=%%A"
 for /f "tokens=2 delims=." %%B in ("%PY_VER%") do set "PY_MINOR=%%B"
 
-echo Detected Python version %PY_VER% using %PY_CMD%.
+for /f "usebackq delims=" %%B in (`%PY_CMD% -c "import struct; print(struct.calcsize('P')*8)" 2^>nul`) do set "PY_BITS=%%B"
 
-REM Require Python >= 3.8
+echo Detected Python version %PY_VER% using %PY_CMD%.
+if not "%PY_BITS%"=="" echo Detected architecture: %PY_BITS%-bit.
+
+REM Require Python >= 3.10
 if %PY_MAJOR% LSS 3 (
   echo ERROR: Python 3.x is required.
   call :maybe_pause
   endlocal
   exit /b 1
 )
-if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 8 (
-  echo ERROR: Python 3.8+ is required. Detected %PY_VER%.
+if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 10 (
+  echo ERROR: Python 3.10+ is required. Detected %PY_VER%.
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
+
+if not "%PY_BITS%"=="64" (
+  echo ERROR: 64-bit Python is required for local model builds. Please install the 64-bit edition of Python 3.10 or newer.
   call :maybe_pause
   endlocal
   exit /b 1
