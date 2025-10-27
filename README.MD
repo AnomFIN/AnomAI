@@ -103,4 +103,48 @@ Aktivoinnin jälkeen `python` ja `pip` viittaavat automaattisesti oikeaan ympär
 
 ---
 
+## 8. 2024-ulkoasupäivitys ja uudet toiminnot
+
+* **Cyber-neon -teema:** Sovellus hyödyntää nyt anomfin-website -sivuston kaltaista tummaa taustaa, turkooseja korostuksia ja selkeitä kortteja.
+* **Tallenteiden katselu:** Uusi *Tallenteet*-näkymä näyttää koko keskusteluhistorian listana. Valitse viesti selataksesi tai käytä toistonappeja (▶, ⏸, ⏹, 🐢, ⚖, ⚡) simuloituun uusintatoistoon.
+* **Zoom-napit:** Yläpalkista löytyvät zoom-napit (＋/−) muuttavat chatti- ja editorifontin kokoa turvallisissa rajoissa. Muutos tallentuu `config.json`-tiedostoon.
+* **Varmempi tallennus:** Keskusteluhistoria tallentuu nyt riippumatta siitä selaatko tallenteita tai toistatko vanhoja viestejä. Tallennus ja toistonäkymän päivitykset on eriytetty toisistaan.
+
+---
+
+## 9. Käyttö- ja testikomennot
+
+```bash
+python -m venv .venv            # (valinnainen) erillinen ympäristö
+.venv/Scripts/activate          # Windows PowerShell
+pip install -r requirements.txt
+python jugiai.py                                # Käynnistä käyttöliittymä
+python -m unittest discover -s tests            # Aja yksikkötestit
+```
+
+### Vianetsintä ja varmistus
+
+1. Käynnistä `python jugiai.py` ja varmista, että uusi tumma teema sekä zoom-painikkeet näkyvät.
+2. Lähetä viesti → avaa *Tallenteet* → varmista, että viesti ilmestyy listaan ja toistopainikkeet toimivat.
+3. Säädä zoomia ± ja tarkista, että fonttikoko muuttuu myös kirjoitusalueella.
+
+---
+
+## 10. Miksi tämä design
+
+* **Teema yhtenäistää brändin:** Käytetyt värit ja typografia seuraavat anomfin-website -sivuston kontrastia ja neon-korostuksia.
+* **Tallenteiden toisto on sivuvaikutukseton:** Historiatoistin käyttää vain muistissa olevaa listaa eikä estä `history.json`-tiedoston kirjoitusta.
+* **Zoom on saavutettava:** Fonttikoon rajaaminen varmistaa luettavuuden eikä riko layouttia.
+* **Testattava ydin:** Zoom- ja toistonopeuslogiikka kapseloitiin `playback_utils.py`-tiedostoon, jota yksikkötestit kattavat.
+
+---
+
+## 11. Seuraavat iteroinnit
+
+1. **Äänitallenteet:** Mahdollista ääni- ja videoliitteiden esikatselu Tallenteet-näkymässä.
+2. **Haku tallenteista:** Lisää hakukenttä, joka suodattaa historiaa roolin, avainsanan tai aikaleiman perusteella.
+3. **Export to PDF/Markdown:** Tarjoa pikatoiminto keskusteluhistorian vientiin yhdeksi tiedostoksi.
+
+---
+
 **© 2024 AnomFIN · Intelligent Experiences**

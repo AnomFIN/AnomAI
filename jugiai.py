@@ -9,6 +9,8 @@ Ominaisuudet:
 
 Riippuvuudet: Vain Python 3:n standardikirjastot (tkinter, json, urllib). Ei vaadi asennuksia.
 """
+
+# Windows-native AI. Zero friction, full acceleration.
 from __future__ import annotations
 
 import base64
@@ -29,6 +31,13 @@ import importlib.metadata
 import importlib.util
 import urllib.error
 import urllib.request
+
+from playback_utils import (
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    clamp_font_size,
+    resolve_speed_delay,
+)
 
 # Optional: PIL/Pillow support for improved image handling
 try:
@@ -215,6 +224,12 @@ class JugiAIApp(tk.Tk):
         self.llm = None
         self.llm_model_path = None
 
+        self._is_loading_history = False
+        self._history_viewer: Dict[str, Any] | None = None
+        self._history_play_job: Optional[str] = None
+        self._history_play_speed = "normal"
+        self._active_font_size = clamp_font_size(self.config_dict.get("font_size", 12), 0)
+
         self.pending_attachments: List[Dict[str, Any]] = []
         self.stream_start_index: Optional[str] = None
         self.current_stream_text: str = ""
@@ -227,94 +242,100 @@ class JugiAIApp(tk.Tk):
         except Exception:
             pass
 
-        self.configure(bg="#020617")
-        self.style.configure("TFrame", background="#020617")
-        self.style.configure("TLabel", background="#020617", foreground="#e2e8f0")
+        base_bg = "#01030f"
+        surface_bg = "#041021"
+        card_bg = "#061733"
+        accent = "#14f1ff"
+        secondary = "#8ddcff"
 
-        self.style.configure("Nav.TFrame", background="#010b1a")
+        self.configure(bg=base_bg)
+        self.style.configure("TFrame", background=base_bg)
+        self.style.configure("TLabel", background=base_bg, foreground="#e2f7ff")
+
+        self.style.configure("Nav.TFrame", background="#020d21")
         self.style.configure(
             "Brand.TLabel",
-            background="#010b1a",
-            foreground="#e0f2fe",
+            background="#020d21",
+            foreground=accent,
             font=("Segoe UI Semibold", 20, "bold"),
         )
         self.style.configure(
             "NavSubtitle.TLabel",
-            background="#010b1a",
-            foreground="#94a3b8",
+            background="#020d21",
+            foreground=secondary,
             font=("Segoe UI", 11),
         )
         self.style.configure(
             "Subtle.TLabel",
-            background="#020617",
-            foreground="#94a3b8",
+            background=base_bg,
+            foreground="#6b94b8",
             font=("Segoe UI", 10),
         )
         self.style.configure(
             "SectionTitle.TLabel",
-            background="#020617",
-            foreground="#f8fafc",
+            background=base_bg,
+            foreground="#e2f7ff",
             font=("Segoe UI Semibold", 15),
         )
-        self.style.configure("Surface.TFrame", background="#020617")
+        self.style.configure("Surface.TFrame", background=base_bg)
         self.style.configure(
             "CardSurface.TFrame",
-            background="#0b1220",
+            background=surface_bg,
             relief=tk.FLAT,
             borderwidth=0,
         )
         self.style.configure(
             "Card.TFrame",
-            background="#0f172a",
+            background=card_bg,
             relief=tk.FLAT,
             borderwidth=0,
         )
         self.style.configure(
             "Card.TLabel",
-            background="#0f172a",
-            foreground="#e2e8f0",
+            background=card_bg,
+            foreground="#dbeafe",
         )
         self.style.configure(
             "Attachment.TFrame",
-            background="#1e293b",
+            background="#0a2a4f",
             relief=tk.FLAT,
             borderwidth=0,
         )
         self.style.configure(
             "Attachment.TLabel",
-            background="#1e293b",
-            foreground="#f1f5f9",
+            background="#0a2a4f",
+            foreground="#f0f9ff",
             font=("Segoe UI", 10),
         )
         self.style.configure(
             "Accent.TButton",
             font=("Segoe UI Semibold", 11),
             padding=10,
-            background="#2563eb",
-            foreground="#f8fafc",
+            background="#0ea5e9",
+            foreground="#0e172a",
             borderwidth=0,
         )
         self.style.map(
             "Accent.TButton",
-            background=[("pressed", "#1d4ed8"), ("active", "#1d4ed8"), ("disabled", "#1e3a8a")],
-            foreground=[("disabled", "#9ca3af")],
+            background=[("pressed", "#0284c7"), ("active", "#06b6d4"), ("disabled", "#083344")],
+            foreground=[("disabled", "#60a5fa")],
         )
         self.style.configure(
             "Toolbar.TButton",
             font=("Segoe UI", 10),
             padding=8,
-            background="#0f172a",
-            foreground="#e2e8f0",
+            background="#071427",
+            foreground="#dbeafe",
             borderwidth=0,
         )
         self.style.map(
             "Toolbar.TButton",
-            background=[("active", "#172554"), ("pressed", "#1e3a8a")],
-            foreground=[("disabled", "#64748b")],
+            background=[("active", "#0f1e3a"), ("pressed", "#1b3661")],
+            foreground=[("disabled", "#3f5670")],
         )
         self.style.configure(
             "StatusBadgeIdle.TLabel",
-            background="#10b981",
+            background="#15f5d8",
             foreground="#022c22",
             font=("Segoe UI Semibold", 10),
             padding=(12, 4),
@@ -328,22 +349,22 @@ class JugiAIApp(tk.Tk):
         )
         self.style.configure(
             "MetricTitle.TLabel",
-            background="#0f172a",
-            foreground="#94a3b8",
+            background=card_bg,
+            foreground="#60a5fa",
             font=("Segoe UI", 10),
         )
         self.style.configure(
             "MetricValue.TLabel",
-            background="#0f172a",
-            foreground="#f8fafc",
+            background=card_bg,
+            foreground="#e2f7ff",
             font=("Segoe UI Semibold", 16),
         )
         self.style.configure(
             "TCombobox",
-            fieldbackground="#0f172a",
-            background="#0f172a",
-            foreground="#e2e8f0",
-            arrowcolor="#93c5fd",
+            fieldbackground="#041024",
+            background="#041024",
+            foreground="#dbeafe",
+            arrowcolor=accent,
         )
         self.style.map(
             "TCombobox",
@@ -507,6 +528,29 @@ class JugiAIApp(tk.Tk):
         ttk.Button(buttons_bar, text="Tyhjennä", style="Toolbar.TButton", command=self.clear_history).pack(
             side=tk.LEFT, padx=(0, 8)
         )
+        ttk.Button(
+            buttons_bar,
+            text="Tallenteet 🎞️",
+            style="Toolbar.TButton",
+            command=self.open_history_viewer,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        zoom_frame = ttk.Frame(buttons_bar, style="Nav.TFrame")
+        zoom_frame.pack(side=tk.LEFT, padx=(4, 8))
+        ttk.Label(zoom_frame, text="Zoom", style="NavSubtitle.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            zoom_frame,
+            text="−",
+            width=3,
+            style="Toolbar.TButton",
+            command=lambda: self.adjust_font_size(-1),
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            zoom_frame,
+            text="＋",
+            width=3,
+            style="Toolbar.TButton",
+            command=lambda: self.adjust_font_size(1),
+        ).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(buttons_bar, text="Asetukset ⚙", style="Toolbar.TButton", command=self.open_settings).pack(
             side=tk.LEFT
         )
@@ -580,27 +624,20 @@ class JugiAIApp(tk.Tk):
             fs = 12
 
         self.chat.configure(
-            bg="#0b1220",
-            fg="#f8fafc",
-            insertbackground="#f8fafc",
-            font=("Segoe UI", fs),
+            bg="#030b1f",
+            fg="#e2f7ff",
+            insertbackground="#f0f9ff",
             spacing1=6,
             spacing2=3,
             padx=12,
             pady=12,
             relief=tk.FLAT,
             highlightthickness=0,
+            borderwidth=0,
         )
         self.chat.bind("<Configure>", lambda event: self._position_watermark_overlay())
 
-        self.chat.tag_configure("role_user", foreground="#93c5fd", font=("Segoe UI", fs))
-        self.chat.tag_configure("role_assistant", foreground="#4ade80", font=("Segoe UI", fs))
-        self.chat.tag_configure("error", foreground="#f87171", font=("Segoe UI", fs))
-        self.chat.tag_configure("header_user", foreground="#bfdbfe", font=("Segoe UI", fs, "bold"))
-        self.chat.tag_configure("header_assistant", foreground="#a7f3d0", font=("Segoe UI", fs, "bold"))
-        self.chat.tag_configure("attachment", foreground="#facc15", font=("Segoe UI", max(fs - 1, 8)))
-        self.chat.tag_configure("separator_user", foreground="#2563eb")
-        self.chat.tag_configure("separator_assistant", foreground="#0ea5e9")
+        self._apply_font_size(self._active_font_size)
 
         composer = ttk.Frame(root, style="Surface.TFrame", padding=(24, 20))
         composer.grid(row=3, column=0, sticky="ew")
@@ -623,17 +660,17 @@ class JugiAIApp(tk.Tk):
         self.input = tk.Text(composer, height=5, wrap=tk.WORD, relief=tk.FLAT)
         self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
-            bg="#111827",
-            fg="#f8fafc",
-            insertbackground="#f8fafc",
-            font=("Segoe UI", fs),
+            bg="#071427",
+            fg="#e2f7ff",
+            insertbackground="#e2f7ff",
             spacing1=6,
             spacing2=3,
             padx=14,
             pady=14,
             highlightthickness=1,
-            highlightcolor="#1f2937",
-            highlightbackground="#1f2937",
+            highlightcolor="#0ea5e9",
+            highlightbackground="#0a223d",
+            borderwidth=0,
         )
 
         action_row = ttk.Frame(composer, style="Surface.TFrame")
@@ -647,6 +684,7 @@ class JugiAIApp(tk.Tk):
 
         self._refresh_attachment_chips()
         self._update_overview_metrics()
+        self._apply_font_size(self._active_font_size)
 
     def _resolve_model_options(self) -> List[str]:
         options = self.config_dict.get("model_options")
@@ -717,6 +755,312 @@ class JugiAIApp(tk.Tk):
                 width=2,
                 command=lambda i=idx: self.remove_attachment(i),
             ).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _apply_font_size(self, font_size: int) -> None:
+        sanitized = clamp_font_size(font_size, 0)
+        self._active_font_size = sanitized
+        base_font = ("Segoe UI", sanitized)
+        accent_font = ("Segoe UI", max(sanitized - 2, MIN_FONT_SIZE - 2, 8))
+
+        if hasattr(self, "chat"):
+            try:
+                self.chat.configure(font=base_font)
+            except Exception:
+                pass
+            try:
+                self.chat.tag_configure("role_user", foreground="#38bdf8", font=base_font)
+                self.chat.tag_configure("role_assistant", foreground="#34d399", font=base_font)
+                self.chat.tag_configure("error", foreground="#f87171", font=base_font)
+                self.chat.tag_configure(
+                    "header_user",
+                    foreground="#7dd3fc",
+                    font=("Segoe UI", sanitized, "bold"),
+                )
+                self.chat.tag_configure(
+                    "header_assistant",
+                    foreground="#6ee7b7",
+                    font=("Segoe UI", sanitized, "bold"),
+                )
+                self.chat.tag_configure("attachment", foreground="#facc15", font=accent_font)
+                self.chat.tag_configure("separator_user", foreground="#38bdf8")
+                self.chat.tag_configure("separator_assistant", foreground="#0ea5e9")
+            except Exception:
+                pass
+
+        if hasattr(self, "input"):
+            try:
+                self.input.configure(font=base_font)
+            except Exception:
+                pass
+
+    def adjust_font_size(self, delta: int) -> None:
+        new_size = clamp_font_size(self._active_font_size, delta)
+        if new_size == self._active_font_size:
+            self._safe_log(f"Font size unchanged at {new_size}")
+            return
+        self.config_dict["font_size"] = new_size
+        self._apply_font_size(new_size)
+        self.save_config()
+
+    def _cancel_history_playback_job(self) -> None:
+        if self._history_play_job is not None:
+            try:
+                self.after_cancel(self._history_play_job)
+            except Exception:
+                pass
+            self._history_play_job = None
+
+    def _format_history_entry(self, entry: Dict[str, Any]) -> str:
+        timestamp = entry.get("timestamp") or "–"
+        role = entry.get("role", "?").upper()
+        content = (entry.get("content") or "").strip()
+        attachments = entry.get("attachments") or []
+        lines = [f"[{timestamp}] {role}"]
+        if content:
+            lines.append(content)
+        if attachments:
+            lines.append("Liitteet:")
+            for att in attachments:
+                name = att.get("name", "liite")
+                mime = att.get("mime", "tuntematon")
+                size = att.get("size")
+                size_info = f" · {size} B" if isinstance(size, int) else ""
+                lines.append(f" - {name} ({mime}{size_info})")
+        return "\n".join(lines)
+
+    def _refresh_history_viewer(self) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        window = viewer.get("window")
+        if window is None or not window.winfo_exists():
+            self._history_viewer = None
+            self._cancel_history_playback_job()
+            return
+        listbox: tk.Listbox = viewer["listbox"]
+        selection = listbox.curselection()
+        selected_idx = selection[0] if selection else None
+        listbox.delete(0, tk.END)
+        for idx, entry in enumerate(self.history):
+            ts = entry.get("timestamp") or f"{idx + 1:02d}"
+            role = entry.get("role", "?").capitalize()
+            snippet = (entry.get("content") or "").strip().replace("\n", " ")
+            if len(snippet) > 48:
+                snippet = snippet[:45] + "…"
+            listbox.insert(tk.END, f"{idx + 1:02d}. {ts} · {role} – {snippet}")
+        if selected_idx is not None and selected_idx < listbox.size():
+            listbox.selection_set(selected_idx)
+            listbox.see(selected_idx)
+        viewer["status_var"].set(f"Tallenteita: {len(self.history)}")
+        state = viewer["state"]
+        if state.get("index", 0) > len(self.history):
+            state["index"] = len(self.history)
+
+    def _render_history_entry(self, index: int) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        display: ScrolledText = viewer["display"]
+        display.configure(state=tk.NORMAL)
+        display.delete("1.0", tk.END)
+        if 0 <= index < len(self.history):
+            display.insert("1.0", self._format_history_entry(self.history[index]))
+        display.configure(state=tk.DISABLED)
+        viewer["status_var"].set(f"Tallenteita: {len(self.history)} · Selaus")
+
+    def open_history_viewer(self) -> None:
+        viewer = self._history_viewer
+        if viewer and viewer.get("window") and viewer["window"].winfo_exists():
+            viewer["window"].deiconify()
+            viewer["window"].lift()
+            viewer["window"].focus_force()
+            self._refresh_history_viewer()
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Tallenteet – JugiAI")
+        dlg.configure(bg="#01030f")
+        dlg.geometry("840x540")
+        dlg.minsize(760, 480)
+
+        layout = ttk.Frame(dlg, padding=16, style="Surface.TFrame")
+        layout.pack(fill=tk.BOTH, expand=True)
+        layout.columnconfigure(0, weight=2)
+        layout.columnconfigure(1, weight=3)
+        layout.rowconfigure(1, weight=1)
+
+        ttk.Label(layout, text="Tallennekirjasto", style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(layout, text="Toisto", style="SectionTitle.TLabel").grid(row=0, column=1, sticky="w")
+
+        list_frame = ttk.Frame(layout, style="CardSurface.TFrame", padding=12)
+        list_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+
+        listbox = tk.Listbox(
+            list_frame,
+            bg="#041024",
+            fg="#e2f7ff",
+            highlightcolor="#14f1ff",
+            highlightbackground="#0a223d",
+            selectbackground="#0ea5e9",
+            selectforeground="#01030f",
+            activestyle="none",
+            relief=tk.FLAT,
+        )
+        listbox.grid(row=0, column=0, sticky="nsew")
+        list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
+        list_scroll.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=list_scroll.set)
+
+        detail_frame = ttk.Frame(layout, style="CardSurface.TFrame", padding=12)
+        detail_frame.grid(row=1, column=1, sticky="nsew")
+        detail_frame.rowconfigure(0, weight=1)
+        detail_frame.columnconfigure(0, weight=1)
+
+        display = ScrolledText(
+            detail_frame,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+            background="#030b1f",
+            foreground="#e2f7ff",
+            insertbackground="#e2f7ff",
+            relief=tk.FLAT,
+            highlightthickness=0,
+        )
+        display.grid(row=0, column=0, sticky="nsew")
+
+        controls = ttk.Frame(detail_frame, style="Surface.TFrame")
+        controls.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        controls.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value=f"Tallenteita: {len(self.history)}")
+        status_label = ttk.Label(controls, textvariable=status_var, style="Subtle.TLabel")
+        status_label.grid(row=0, column=0, sticky="w")
+
+        ttk.Button(controls, text="▶ Toista", style="Toolbar.TButton", command=self.start_history_playback).grid(
+            row=0, column=1, padx=(12, 0)
+        )
+        ttk.Button(controls, text="⏸ Tauko", style="Toolbar.TButton", command=self._pause_history_playback).grid(
+            row=0, column=2, padx=(12, 0)
+        )
+        ttk.Button(controls, text="⏹ Stop", style="Toolbar.TButton", command=self._stop_history_playback).grid(
+            row=0, column=3, padx=(12, 0)
+        )
+        ttk.Button(controls, text="🐢 Hidastus", style="Toolbar.TButton", command=lambda: self._set_history_play_speed("slow")).grid(
+            row=0, column=4, padx=(12, 0)
+        )
+        ttk.Button(controls, text="⚖ Normaali", style="Toolbar.TButton", command=lambda: self._set_history_play_speed("normal")).grid(
+            row=0, column=5, padx=(12, 0)
+        )
+        ttk.Button(controls, text="⚡ Nopeutus", style="Toolbar.TButton", command=lambda: self._set_history_play_speed("fast")).grid(
+            row=0, column=6, padx=(12, 0)
+        )
+
+        viewer_state = {"index": 0, "speed": self._history_play_speed, "mode": "browse"}
+        self._history_viewer = {
+            "window": dlg,
+            "listbox": listbox,
+            "display": display,
+            "status_var": status_var,
+            "state": viewer_state,
+        }
+
+        def _on_select(event=None):
+            selection = listbox.curselection()
+            if not selection:
+                return
+            idx = selection[0]
+            viewer_state["index"] = idx
+            viewer_state["mode"] = "browse"
+            self._cancel_history_playback_job()
+            self._render_history_entry(idx)
+
+        listbox.bind("<<ListboxSelect>>", _on_select)
+
+        def _close() -> None:
+            self._stop_history_playback()
+            self._history_viewer = None
+            dlg.destroy()
+
+        dlg.protocol("WM_DELETE_WINDOW", _close)
+        self._refresh_history_viewer()
+
+    def start_history_playback(self) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        if not self.history:
+            viewer["status_var"].set("Ei tallenteita toistettavaksi")
+            return
+        listbox: tk.Listbox = viewer["listbox"]
+        selection = listbox.curselection()
+        start_index = selection[0] if selection else 0
+        viewer["state"]["index"] = start_index
+        viewer["state"]["mode"] = "play"
+        self._cancel_history_playback_job()
+        display: ScrolledText = viewer["display"]
+        display.configure(state=tk.NORMAL)
+        display.delete("1.0", tk.END)
+        display.configure(state=tk.DISABLED)
+        viewer["status_var"].set(f"Toisto käynnissä ({viewer['state']['speed']})")
+        self._history_viewer_play_step()
+
+    def _history_viewer_play_step(self) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        state = viewer["state"]
+        if state.get("mode") != "play":
+            return
+        idx = state.get("index", 0)
+        if idx >= len(self.history):
+            self._stop_history_playback(completed=True)
+            return
+        entry = self.history[idx]
+        display: ScrolledText = viewer["display"]
+        display.configure(state=tk.NORMAL)
+        display.insert(tk.END, self._format_history_entry(entry) + "\n\n")
+        display.configure(state=tk.DISABLED)
+        display.see(tk.END)
+        listbox: tk.Listbox = viewer["listbox"]
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(idx)
+        listbox.see(idx)
+        state["index"] = idx + 1
+        delay = resolve_speed_delay(state.get("speed", "normal"))
+        self._history_play_job = self.after(delay, self._history_viewer_play_step)
+
+    def _pause_history_playback(self) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        self._cancel_history_playback_job()
+        viewer["state"]["mode"] = "pause"
+        viewer["status_var"].set("Toisto keskeytetty")
+
+    def _stop_history_playback(self, completed: bool = False) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        self._cancel_history_playback_job()
+        viewer["state"].update({"mode": "browse", "index": 0})
+        if completed:
+            viewer["status_var"].set("Toisto valmis")
+        else:
+            viewer["status_var"].set(f"Tallenteita: {len(self.history)}")
+
+    def _set_history_play_speed(self, speed: str) -> None:
+        viewer = self._history_viewer
+        if not viewer:
+            return
+        normalized = speed if speed in {"slow", "normal", "fast"} else "normal"
+        viewer["state"]["speed"] = normalized
+        self._history_play_speed = normalized
+        if viewer["state"].get("mode") == "play":
+            viewer["status_var"].set(f"Toisto käynnissä ({normalized})")
+        else:
+            viewer["status_var"].set(f"Toistonopeus: {normalized}")
 
     def add_attachment(self) -> None:
         paths = filedialog.askopenfilenames(title="Valitse liitteet")
@@ -910,7 +1254,9 @@ class JugiAIApp(tk.Tk):
         self.chat.insert(tk.END, "\n")
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
-        self._update_overview_metrics()
+        if not self._is_loading_history:
+            self._update_overview_metrics()
+            self._refresh_history_viewer()
 
     def append_error(self, content: str) -> None:
         self.chat.configure(state=tk.NORMAL)
@@ -951,6 +1297,7 @@ class JugiAIApp(tk.Tk):
         self.history.append(history_entry)
         self.save_history()
         self._update_overview_metrics()
+        self._refresh_history_viewer()
 
         self.pending_attachments = []
         self._refresh_attachment_chips()
@@ -1005,6 +1352,7 @@ class JugiAIApp(tk.Tk):
         self.after(0, lambda text=final_text: self.finalize_assistant_stream(text))
         self.after(0, self.save_history)
         self.after(0, self._update_overview_metrics)
+        self.after(0, self._refresh_history_viewer)
         self.after(0, lambda: self.set_busy(False))
         self.after(0, lambda: setattr(self, '_is_sending', False))
         self.current_stream_timestamp = None
@@ -1176,6 +1524,7 @@ class JugiAIApp(tk.Tk):
 
     # --- Persistence ---
     def load_history(self) -> None:
+        self._is_loading_history = True
         if os.path.exists(HISTORY_FILE):
             try:
                 with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -1193,7 +1542,9 @@ class JugiAIApp(tk.Tk):
                     )
             except Exception:
                 self.history = []
+        self._is_loading_history = False
         self._update_overview_metrics()
+        self._refresh_history_viewer()
 
     def save_history(self) -> None:
         try:
@@ -1212,6 +1563,7 @@ class JugiAIApp(tk.Tk):
         self.save_history()
         self._insert_watermark_if_needed()
         self._update_overview_metrics()
+        self._refresh_history_viewer()
 
     def open_profiles(self) -> None:
         profiles = self.config_dict.get("profiles", {})
