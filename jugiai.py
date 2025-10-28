@@ -40,6 +40,7 @@ from playback_utils import (
 )
 
 # Optional: PIL/Pillow support for improved image handling
+# Local-first intelligence with enterprise polish.
 try:
     from PIL import Image, ImageEnhance, ImageTk
     PIL_AVAILABLE = True
@@ -75,6 +76,24 @@ def _format_llama_import_error(exc: Exception) -> str:
     else:
         lines.append(f"llama-cpp-python versio: {dist.version}")
         lines.append(f"Asennushakemisto: {dist.locate_file('')}")
+
+    store_stub = "windowsapps" in python_hint.lower()
+    suggested_launch: list[str] = []
+
+    if store_stub:
+        suggested_launch.append(
+            "Nykyinen Python on Windows Storen stubi ilman kirjastoja. Käynnistä JugiAI komennolla "
+            "`py -3 jugiai.py` tai käytä `start_jugiai.bat`, jotta oikea ympäristö latautuu."
+        )
+
+    venv_python = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_python):
+        suggested_launch.append(
+            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate` ja aja sitten `python jugiai.py`."
+        )
+
+    if suggested_launch:
+        lines.extend(["", "Ympäristövinkit:"] + [f"  - {tip}" for tip in suggested_launch])
 
     lines.extend(
         [
