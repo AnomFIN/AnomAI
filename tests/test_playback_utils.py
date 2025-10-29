@@ -2,7 +2,13 @@
 
 # Ship intelligence, not excuses.
 
+import pathlib
+import sys
 import unittest
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from playback_utils import MAX_FONT_SIZE, MIN_FONT_SIZE, clamp_font_size, resolve_speed_delay
 

@@ -18,6 +18,7 @@ import json
 import mimetypes
 import os
 import sys
+import subprocess
 import threading
 import time
 import tkinter as tk
@@ -29,6 +30,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import importlib.metadata
 import importlib.util
+import shutil
 import urllib.error
 import urllib.request
 
@@ -39,7 +41,7 @@ from playback_utils import (
     resolve_speed_delay,
 )
 
-# Optional: PIL/Pillow support for improved image handling
+# Optional: PIL/Pillow support for improved image handling.
 try:
     from PIL import Image, ImageEnhance, ImageTk
     PIL_AVAILABLE = True
@@ -50,6 +52,54 @@ except ImportError:
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
 ERROR_LOG_FILE = os.path.join(os.path.dirname(__file__), "jugiai_error.log")
+
+
+def _should_redirect_windows_store(executable: str, env: Dict[str, str], platform: str) -> bool:
+    if not executable:
+        return False
+    if env.get("JUGIAI_SKIP_STUB_GUARD") == "1":
+        return False
+    if not platform.lower().startswith("win"):
+        return False
+    lower_exec = executable.lower()
+    return "windowsapps" in lower_exec and lower_exec.endswith("python.exe")
+
+
+def _guard_windows_store_stub() -> None:
+    if not _should_redirect_windows_store(sys.executable or "", dict(os.environ), sys.platform):
+        return
+
+    launcher = shutil.which("py")
+    if not launcher:
+        return
+
+    env = os.environ.copy()
+    env["JUGIAI_SKIP_STUB_GUARD"] = "1"
+    script_path = os.path.abspath(__file__)
+    args = [launcher, "-3", script_path, *sys.argv[1:]]
+
+    print(
+        "Havaittu Windows Storen Python-stubi. Käynnistetään uudelleen komennolla: "
+        f"{' '.join(args)}",
+        flush=True,
+    )
+
+    try:
+        subprocess.check_call(args, env=env)
+    except Exception as exc:  # pragma: no cover - diagnostiikka
+        print(
+            "Uudelleenkäynnistys epäonnistui. Käytä komentoa `py -3 jugiai.py`.",
+            f"Virhe: {exc}",
+            sep="\n",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    raise SystemExit(0)
+
+
+_guard_windows_store_stub()
 
 
 def _format_llama_import_error(exc: Exception) -> str:
@@ -75,6 +125,24 @@ def _format_llama_import_error(exc: Exception) -> str:
     else:
         lines.append(f"llama-cpp-python versio: {dist.version}")
         lines.append(f"Asennushakemisto: {dist.locate_file('')}")
+
+    store_stub = "windowsapps" in python_hint.lower()
+    suggested_launch: list[str] = []
+
+    if store_stub:
+        suggested_launch.append(
+            "Nykyinen Python on Windows Storen stubi ilman kirjastoja. Käynnistä JugiAI komennolla "
+            "`py -3 jugiai.py` tai käytä `start_jugiai.bat`, jotta oikea ympäristö latautuu."
+        )
+
+    venv_python = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_python):
+        suggested_launch.append(
+            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate` ja aja sitten `python jugiai.py`."
+        )
+
+    if suggested_launch:
+        lines.extend(["", "Ympäristövinkit:"] + [f"  - {tip}" for tip in suggested_launch])
 
     lines.extend(
         [
