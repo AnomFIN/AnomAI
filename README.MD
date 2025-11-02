@@ -18,6 +18,12 @@ Tämä asiakirja kokoaa yhteen kaikki vaiheet, joilla AnomAI/JugiAI puretaan, as
 
 Asennusohjelma käy läpi seuraavat vaiheet ja pitää ikkunan auki myös virhetilanteissa, jotta näet selkeät korjausohjeet:
 
+### UTF-8-käynnistin (`install_utf8.bat`)
+
+* **Turvallinen koodisivun vaihto.** `install_utf8.bat` tunnistaa konsolin nykyisen koodisivun, yrittää vaihtaa UTF-8:aan ja palauttaa alkuperäisen tilan, vaikka `install.bat` epäonnistuisi.
+* **Rakenteinen lokitus.** Kaikki ilmoitukset tulostuvat JSON-muodossa (`{"component":"install_utf8", ...}`), joten ne on helppo ohjata lokityökaluun tai liittää tukipyyntöön.
+* **Virhesieto.** Jos koodisivun vaihto tai `install.bat`-haku epäonnistuu, skripti raportoi tilanteen, pitää prosessin käynnissä ja antaa yksiselitteiset jatko-ohjeet.
+
 1. **Käynnistä asennus** kaksoisklikkaamalla `install.bat`. Konsolin koodisivu vaihtuu automaattisesti UTF-8-muotoon, joten ääkköset näkyvät oikein.
 2. **Pythonin tunnistus ja tarkistus.** Skripti etsii asennetun Pythonin (`py -3`, `python`, `python3`) ja varmistaa, että käytössä on vähintään 64-bittinen Python 3.10. Halutessasi voit syöttää oman polun.
 3. **Virtuaaliympäristö `.venv`.** Projektiin luodaan automaattisesti `.venv`-kansio. Jos luonti epäonnistuu, jatketaan suoraan järjestelmän Pythonilla, mutta suosittelemme käyttämään virtuaaliympäristöä.
@@ -121,6 +127,7 @@ python -m venv .venv            # (valinnainen) erillinen ympäristö
 pip install -r requirements.txt
 python jugiai.py                                # Käynnistä käyttöliittymä
 python -m unittest discover -s tests            # Aja yksikkötestit
+python -m unittest tests.test_install_utf8_script  # Varmista asennuskääreen eheys
 ```
 
 ### Vianetsintä ja varmistus
@@ -128,6 +135,7 @@ python -m unittest discover -s tests            # Aja yksikkötestit
 1. Käynnistä `python jugiai.py` ja varmista, että uusi tumma teema sekä zoom-painikkeet näkyvät.
 2. Lähetä viesti → avaa *Tallenteet* → varmista, että viesti ilmestyy listaan ja toistopainikkeet toimivat.
 3. Säädä zoomia ± ja tarkista, että fonttikoko muuttuu myös kirjoitusalueella.
+4. Aja `install_utf8.bat` → varmista, että lokirivit ovat JSON-muotoisia ja että koodisivu palautuu, kun ikkuna suljetaan.
 
 ---
 
@@ -137,6 +145,7 @@ python -m unittest discover -s tests            # Aja yksikkötestit
 * **Tallenteiden toisto on sivuvaikutukseton:** Historiatoistin käyttää vain muistissa olevaa listaa eikä estä `history.json`-tiedoston kirjoitusta.
 * **Zoom on saavutettava:** Fonttikoon rajaaminen varmistaa luettavuuden eikä riko layouttia.
 * **Testattava ydin:** Zoom- ja toistonopeuslogiikka kapseloitiin `playback_utils.py`-tiedostoon, jota yksikkötestit kattavat.
+* **UTF-8-kääre on idempotentti:** `install_utf8.bat` palauttaa alkuperäisen koodisivun ja raportoi JSON-lokeilla, joten se on turvallista ajaa myös skriptien sisältä.
 
 ---
 
