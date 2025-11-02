@@ -45,7 +45,9 @@ if "!ORIG_CP!"=="65001" (
 )
 chcp 65001 >nul 2>&1
 if errorlevel 1 (
-  call :log WARN "Failed to switch console to UTF-8. Continuing with code page !ORIG_CP!"
+  set "CP_MSG=!ORIG_CP!"
+  if not defined ORIG_CP set "CP_MSG=unknown"
+  call :log WARN "Failed to switch console to UTF-8. Continuing with code page !CP_MSG!."
   goto :eof
 )
 set "SWITCHED_UTF8=1"
@@ -71,7 +73,6 @@ goto :eof
 :restore_codepage
 if not defined ORIG_CP goto :eof
 if "!SWITCHED_UTF8!"=="0" goto :eof
-if "!ORIG_CP!"=="" goto :eof
 if "!ORIG_CP!"=="65001" goto :eof
 chcp !ORIG_CP! >nul 2>&1
 if errorlevel 1 (
