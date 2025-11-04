@@ -2280,6 +2280,11 @@ class JugiAIApp(tk.Tk):
             return
 
     def _insert_watermark_if_needed(self) -> None:
+        # Check if watermark should be shown based on show_background setting
+        if not self.config_dict.get("show_background", True):
+            self._remove_watermark_overlay()
+            return
+        
         if not self._wm_img:
             self._remove_watermark_overlay()
             return
