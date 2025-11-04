@@ -138,7 +138,7 @@ def _format_llama_import_error(exc: Exception) -> str:
     venv_python = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
     if os.path.exists(venv_python):
         suggested_launch.append(
-            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate` ja aja sitten `python jugiai.py`."
+            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate.bat` ja aja sitten `python jugiai.py`."
         )
 
     if suggested_launch:
