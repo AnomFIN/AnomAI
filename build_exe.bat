@@ -90,7 +90,9 @@ if errorlevel 1 (
 )
 
 set "INSTALL_LLAMA=K"
-set /p INSTALL_LLAMA=Lisätäänkö paikallisen mallin tuki (llama-cpp-python)? [K/E] (oletus K):
+if /I not "%CI%"=="true" if not "%BUILD_NONINTERACTIVE%"=="1" (
+    set /p INSTALL_LLAMA=Lisätäänkö paikallisen mallin tuki (llama-cpp-python)? [K/E] (oletus K):
+)
 if /I "%INSTALL_LLAMA%"=="K" (
     call :run_with_retry "python -m pip install --upgrade --prefer-binary llama-cpp-python" "llama-cpp-pythonin asennus" 0
     if errorlevel 1 (
@@ -190,7 +192,9 @@ if !ERR! EQU 0 goto :retry_success
 call :log ""
 call :log "!DESC! epäonnistui (virhekoodi !ERR!)."
 set "RETRY=K"
-set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K):
+if /I not "%CI%"=="true" if not "%BUILD_NONINTERACTIVE%"=="1" (
+    set /p RETRY=Yritetäänkö uudelleen? [K/E] (oletus K):
+)
 if /I "!RETRY!"=="E" (
     if "!OPTIONAL!"=="1" (
         call :log "Ohitetaan vaihe: !DESC!."
