@@ -784,7 +784,18 @@ class JugiAIApp(tk.Tk):
             backend_label = "Paikallinen"
         else:
             backend_label = backend.title()
-        model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
+        
+        # For local backend, show the local model filename instead of the "model" field
+        if backend == "local":
+            local_path = (self.config_dict.get("local_model_path") or "").strip()
+            if local_path:
+                # Extract just the filename without path
+                model = os.path.basename(local_path)
+            else:
+                model = "Ei valittu"
+        else:
+            model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
+        
         return f"{backend_label} · {model}"
 
     def _update_overview_metrics(self) -> None:
@@ -2268,6 +2279,11 @@ class JugiAIApp(tk.Tk):
             return
 
     def _insert_watermark_if_needed(self) -> None:
+        # Check if watermark should be shown based on show_background setting
+        if not self.config_dict.get("show_background", True):
+            self._remove_watermark_overlay()
+            return
+        
         if not self._wm_img:
             self._remove_watermark_overlay()
             return
