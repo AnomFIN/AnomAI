@@ -55,7 +55,7 @@ Komentokehotteessa (`cmd.exe`) vastaava komento on:
 
 ```cmd
 cd C:\Polku\AnomAI
-\.venv\Scripts\activate
+\.venv\Scripts\activate.bat
 ```
 
 Aktivoinnin jälkeen `python` ja `pip` viittaavat automaattisesti oikeaan ympäristöön, joten paikallisen mallin tuki ja Pillow pysyvät käytettävissä.
@@ -83,7 +83,7 @@ Aktivoinnin jälkeen `python` ja `pip` viittaavat automaattisesti oikeaan ympär
 | `start_jugiai.bat` ei löydä Pythonia | Python puuttuu tai PATH-ympäristömuuttuja ei sisällä sitä | Asenna Python 3.10+ (64-bit) ja varmista, että asennuksen lopussa valitset “Add python.exe to PATH”, tai käynnistä `AnomAI.exe` suoraan. |
 | Sovellus ei yhdistä OpenAI:hin | Virheellinen API-avain tai malli | Avaa ⚙️ Asetukset → OpenAI-välilehti, syötä toimiva avain ja malli (esim. `gpt-4o-mini`). |
 | `AnomAI.exe` sulkeutuu heti | Taustalla tapahtui poikkeus (esim. `llama-cpp-python` puuttuu nykyisestä ympäristöstä) | Katso virheilmoituksen kertoma polku `jugiai_error.log`-tiedostoon. Lokissa näkyy tarkka traceback ja käytetty Python-polku. Korjaa syy (esim. suorita `"%CD%\.venv\Scripts\python.exe" -m pip install --upgrade --prefer-binary llama-cpp-python`) ja käynnistä uudelleen. |
-| `python jugiai.py` → "Moduulia llama_cpp ei löydy" | Komento käyttää Windows Storen python-stubia, jossa ei ole kirjastoja | Uusin versio yrittää automaattisesti käynnistää `py -3 jugiai.py` -komennon puolestasi. Jos näet virheilmoituksen, avaa `start_jugiai.bat` tai aja `py -3 jugiai.py` käsin. Aktivoi `.venv` komennolla `\.venv\Scripts\activate`, jos sellainen on luotu. |
+| `python jugiai.py` → "Moduulia llama_cpp ei löydy" | Komento käyttää Windows Storen python-stubia, jossa ei ole kirjastoja | Uusin versio yrittää automaattisesti käynnistää `py -3 jugiai.py` -komennon puolestasi. Jos näet virheilmoituksen, avaa `start_jugiai.bat` tai aja `py -3 jugiai.py` käsin. Aktivoi `.venv` komennolla `\.venv\Scripts\activate.bat`, jos sellainen on luotu. |
 
 ---
 
