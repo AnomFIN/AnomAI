@@ -53,7 +53,7 @@ def demo_camera_discovery():
     print_section("Camera Discovery Demonstration")
     
     print("\nNote: This will scan the local network for IP cameras.")
-    print("Scanning for cameras (timeout: 1.5 seconds per port)...")
+    print("Scanning for cameras (timeout: 0.5 seconds per port)...")
     
     try:
         cameras = discover_cameras_on_network(timeout=0.5)

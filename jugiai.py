@@ -309,7 +309,13 @@ def discover_cameras_on_network(timeout: float = 2.0) -> List[Dict[str, Any]]:
         return discovered
     
     # Scan only a subset of the network (first 10 and last 10 IPs to save time)
-    ips_to_scan = list(network.hosts())[:10] + list(network.hosts())[-10:]
+    all_hosts = list(network.hosts())
+    if len(all_hosts) <= 20:
+        # If network is small, scan all hosts
+        ips_to_scan = all_hosts
+    else:
+        # Otherwise, scan first 10 and last 10 to avoid duplicates
+        ips_to_scan = all_hosts[:10] + all_hosts[-10:]
     
     for ip in ips_to_scan:
         ip_str = str(ip)
