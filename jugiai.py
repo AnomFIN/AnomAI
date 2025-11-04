@@ -471,7 +471,7 @@ class JugiAIApp(tk.Tk):
         if self.config_dict.get("offline_mode", False):
             return True
         
-        # Local backend with no API key means offline
+        # Local backend is always offline
         backend = (self.config_dict.get("backend") or "openai").lower()
         api_key = (self.config_dict.get("api_key") or "").strip()
         
@@ -1596,7 +1596,7 @@ class JugiAIApp(tk.Tk):
         # Validate model path exists
         if not model_path:
             raise RuntimeError(
-                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse .gguf-malli."
+                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse malli."
             )
         
         if not os.path.exists(model_path):

@@ -64,7 +64,7 @@ class OfflineModeDetectionTests(unittest.TestCase):
         if config.get("offline_mode", False):
             return True
         
-        # Local backend with no API key means offline
+        # Local backend is always offline
         backend = (config.get("backend") or "openai").lower()
         api_key = (config.get("api_key") or "").strip()
         
