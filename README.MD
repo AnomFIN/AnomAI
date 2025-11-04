@@ -146,10 +146,49 @@ python -m unittest tests.test_install_utf8_script  # Varmista asennuskääreen e
 * **Zoom on saavutettava:** Fonttikoon rajaaminen varmistaa luettavuuden eikä riko layouttia.
 * **Testattava ydin:** Zoom- ja toistonopeuslogiikka kapseloitiin `playback_utils.py`-tiedostoon, jota yksikkötestit kattavat.
 * **UTF-8-kääre on idempotentti:** `install_utf8.bat` palauttaa alkuperäisen koodisivun ja raportoi JSON-lokeilla, joten se on turvallista ajaa myös skriptien sisältä.
+* **Offline-tila:** Sovellus toimii täysin ilman internet-yhteyttä paikallisten mallien kanssa. Offline-tila havaitaan automaattisesti, eikä OpenAI API -kutsuja tehdä.
 
 ---
 
-## 11. Seuraavat iteroinnit
+## 11. Offline-tila ja paikallinen AI
+
+JugiAI tukee täysin offline-toimintaa paikallisten mallien kanssa. Sovellus tunnistaa automaattisesti offline-tilan ja estää API-kutsut OpenAI:lle.
+
+### Offline-tilan havaitseminen
+
+Sovellus toimii offline-tilassa seuraavissa tilanteissa:
+
+1. **Eksplisiittinen offline-tila:** `offline_mode: true` asetuksessa `config.json`-tiedostossa
+2. **Paikallinen backend:** Kun `backend: "local"` on valittu
+3. **Ei API-avainta:** Kun OpenAI-backend on valittu mutta `api_key` puuttuu tai on tyhjä
+
+### Paikallisen mallin käyttö
+
+1. **Asenna llama-cpp-python:** Asennusohjelma (`install.bat`) kysyy, haluatko asentaa paikallisen LLM-tuen
+2. **Lataa .gguf-malli:** Lataa haluamasi malli (esim. LLaMA, Mistral, Phi-3) ja sijoita se `models`-hakemistoon
+3. **Valitse malli asetuksista:** Avaa asetukset (⚙️) ja valitse `backend: "local"` sekä määritä `local_model_path`
+4. **Käynnistä offline-tilassa:** Sovellus ilmoittaa konsolissa: "Running in offline mode — using local AI backend only."
+
+### Offline-tilan edut
+
+* **Täysi yksityisyys:** Ei tiedonsiirtoa verkon yli
+* **Ei riippuvuutta API-avaimista:** Toimii ilman tilausta
+* **Matala latenssi:** Ei verkkoviivettä
+* **PyInstaller-yhteensopiva:** Toimii pakatussa .exe-muodossa
+* **Lentokone-tila:** Toimii ilman internet-yhteyttä
+
+### Virheenkäsittely
+
+Sovellus tarkistaa paikallisen mallin ennen käyttöä:
+
+* **Tyhjä polku:** Ilmoittaa, että malli ei ole valittu
+* **Olematon tiedosto:** Ilmoittaa, että mallia ei löydy määritetystä polusta
+* **Hakemisto tiedoston sijaan:** Tunnistaa, jos polku osoittaa hakemistoon
+* **llama-cpp-python puuttuu:** Antaa selkeät asennusohjeet
+
+---
+
+## 12. Seuraavat iteroinnit
 
 1. **Äänitallenteet:** Mahdollista ääni- ja videoliitteiden esikatselu Tallenteet-näkymässä.
 2. **Haku tallenteista:** Lisää hakukenttä, joka suodattaa historiaa roolin, avainsanan tai aikaleiman perusteella.
