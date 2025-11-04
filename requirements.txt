@@ -1,4 +1,26 @@
-# Optional dependencies for enhanced functionality
-# Pillow is optional but recommended for improved watermark/background image handling on Windows
-# Support Python 3.9+ by allowing older Pillow versions (8.x works with Python 3.9)
+# ============================================================================
+# AnomAI/JugiAI Requirements
+# ============================================================================
+#
+# This file contains the Python package dependencies for AnomAI/JugiAI.
+# The application is designed to work with minimal dependencies using Python's
+# standard library (tkinter, json, urllib, etc.).
+#
+# REQUIRED:
+# - Python 3.10+ (64-bit)
+# - tkinter (usually included with Python on Windows)
+#
+# OPTIONAL:
+# - Pillow: Recommended for improved image handling (watermarks, backgrounds, icons)
+# - llama-cpp-python: For local GGUF/LLM model support (installed separately by install.bat)
+#
+# ============================================================================
+
+# Image processing library (optional but recommended)
+# Enables better watermark/background image handling and icon generation
+# Supports Python 3.9+ by allowing older Pillow versions (8.x works with Python 3.9)
 pillow>=8.0.0
+
+# Note: llama-cpp-python is NOT included here as it requires special installation
+# with --prefer-binary flag and may need C++ build tools on Windows.
+# The install.bat script handles this separately with user confirmation.
