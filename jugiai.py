@@ -245,6 +245,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "frequency_penalty": 0.0,
     # Backend: "openai" tai "local"
     "backend": "openai",
+    # Offline mode: when True, disables all OpenAI API calls
+    "offline_mode": False,
     # Paikallinen malli
     "local_model_path": "",
     "local_threads": 0,  # 0 = auto
@@ -443,6 +445,9 @@ class JugiAIApp(tk.Tk):
 
         self._build_ui()
 
+        # Detect and log offline mode
+        self._detect_and_log_offline_mode()
+
         # Jos avain puuttuu, avaa asetukset heti
         if not self.config_dict.get("api_key"):
             self.after(200, self.open_settings)
@@ -459,6 +464,39 @@ class JugiAIApp(tk.Tk):
             print("[JugiAI]", *args, **kwargs)
         except Exception:
             pass
+
+    def _is_offline_mode(self) -> bool:
+        """Check if the application is running in offline mode."""
+        # Explicit offline mode flag
+        if self.config_dict.get("offline_mode", False):
+            return True
+        
+        # Local backend is always offline
+        backend = (self.config_dict.get("backend") or "openai").lower()
+        api_key = (self.config_dict.get("api_key") or "").strip()
+        
+        if backend == "local":
+            return True
+        
+        # OpenAI backend but no API key means forced offline
+        if backend == "openai" and not api_key:
+            return True
+        
+        return False
+
+    def _detect_and_log_offline_mode(self) -> None:
+        """Detect offline mode and log appropriate messages."""
+        if self._is_offline_mode():
+            backend = (self.config_dict.get("backend") or "openai").lower()
+            if backend == "local":
+                model_path = (self.config_dict.get("local_model_path") or "").strip()
+                if model_path and os.path.exists(model_path):
+                    self._safe_log("Running in offline mode — using local AI backend only.")
+                    self._safe_log(f"Local model: {os.path.basename(model_path)}")
+                else:
+                    self._safe_log("Running in offline mode — local model not configured.")
+            else:
+                self._safe_log("Running in offline mode — no API key available.")
 
     # --- UI ---
     def _ensure_profiles(self) -> None:
@@ -1237,6 +1275,11 @@ class JugiAIApp(tk.Tk):
 
     def _refresh_ping(self) -> None:
         def worker() -> None:
+            # Skip ping check if in offline mode
+            if self._is_offline_mode():
+                self.after(0, lambda: self._update_ping_indicator(None, "error"))
+                return
+            
             api_key = self.config_dict.get("api_key", "").strip()
             url = "https://api.openai.com/v1/models"
             req = urllib.request.Request(url, method="GET")
@@ -1471,6 +1514,13 @@ class JugiAIApp(tk.Tk):
         return "\n".join(lines)
 
     def _call_openai_stream(self) -> Generator[str, None, None]:
+        # Check offline mode first
+        if self._is_offline_mode():
+            raise RuntimeError(
+                "API-kutsu estetty: sovellus on offline-tilassa. "
+                "Valitse paikallinen malli tai lisää API-avain asetuksissa."
+            )
+        
         cfg = self.config_dict
         api_key = cfg.get("api_key")
         if not api_key:
@@ -1542,20 +1592,40 @@ class JugiAIApp(tk.Tk):
     def _call_local_llm(self) -> str:
         cfg = self.config_dict
         model_path = (cfg.get("local_model_path") or "").strip()
-        if not model_path or not os.path.exists(model_path):
-            raise RuntimeError("Paikallista mallia ei ole valittu (.gguf). Avaa asetukset.")
+        
+        # Validate model path exists
+        if not model_path:
+            raise RuntimeError(
+                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse malli."
+            )
+        
+        if not os.path.exists(model_path):
+            raise RuntimeError(
+                f"Paikallista mallia ei löydy: {model_path}\n"
+                "Tarkista polku asetuksista tai lataa malli uudelleen."
+            )
+        
+        # Validate it's a file, not a directory
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Virheellinen mallitiedosto: {model_path}\n"
+                "Polku on hakemisto, ei tiedosto."
+            )
+        
         try:
             from llama_cpp import Llama
         except Exception as exc:
             raise RuntimeError(_format_llama_import_error(exc)) from exc
 
         if self.llm is None or self.llm_model_path != model_path:
+            self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
             self.llm = Llama(
                 model_path=model_path,
                 n_threads=int(cfg.get("local_threads", 0)) or None,
                 verbose=False,
             )
             self.llm_model_path = model_path
+            self._safe_log("Local model loaded successfully.")
 
         messages = self._build_messages_for_backend()
 
