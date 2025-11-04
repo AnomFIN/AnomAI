@@ -35,6 +35,7 @@ class MockApp:
     
     def _format_model_label(self):
         """Copy of the fixed _format_model_label method."""
+        DEFAULT_MODEL = "gpt-4o-mini"  # Mirror DEFAULT_CONFIG["model"]
         backend = (self.config_dict.get("backend") or "openai").strip().lower()
         if backend == "openai":
             backend_label = "OpenAI"
@@ -52,7 +53,7 @@ class MockApp:
             else:
                 model = "Ei valittu"
         else:
-            model = self.config_dict.get("model", "gpt-4o-mini")
+            model = self.config_dict.get("model", DEFAULT_MODEL)
         
         return f"{backend_label} · {model}"
     
