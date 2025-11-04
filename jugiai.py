@@ -266,12 +266,72 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "o4-mini",
         "o3-mini",
     ],
+    # Kamera-asetukset
+    "camera_ip": "",
+    "camera_password": "",
+    "camera_username": "admin",
+    "camera_port": 8080,
+    "discovered_cameras": [],
 }
 
 
 def _log_warning(message: str) -> None:
     """Simple console warning logger for watermark and other non-critical errors."""
     print(f"[WARNING] {message}", flush=True)
+
+
+def discover_cameras_on_network(timeout: float = 2.0) -> List[Dict[str, Any]]:
+    """
+    Discover IP cameras on the local network by scanning common IP camera ports.
+    Returns a list of discovered cameras with their IP addresses.
+    """
+    import socket
+    import ipaddress
+    
+    discovered = []
+    
+    # Get local IP to determine subnet
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        return discovered
+    
+    # Common IP camera ports
+    common_ports = [80, 8080, 554, 8000, 8081]
+    
+    # Get network subnet
+    try:
+        network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
+    except Exception:
+        return discovered
+    
+    # Scan only a subset of the network (first 10 and last 10 IPs to save time)
+    ips_to_scan = list(network.hosts())[:10] + list(network.hosts())[-10:]
+    
+    for ip in ips_to_scan:
+        ip_str = str(ip)
+        for port in common_ports:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                result = sock.connect_ex((ip_str, port))
+                sock.close()
+                
+                if result == 0:
+                    # Port is open, likely a camera
+                    discovered.append({
+                        "ip": ip_str,
+                        "port": port,
+                        "name": f"Kamera {ip_str}:{port}"
+                    })
+                    break  # Found a port, no need to check others for this IP
+            except Exception:
+                continue
+    
+    return discovered
 
 
 class JugiAIApp(tk.Tk):
@@ -1866,10 +1926,12 @@ class JugiAIApp(tk.Tk):
         tab_openai = ttk.Frame(notebook)
         tab_local = ttk.Frame(notebook)
         tab_ui = ttk.Frame(notebook)
+        tab_camera = ttk.Frame(notebook)
         notebook.add(tab_general, text="Yleiset")
         notebook.add(tab_openai, text="OpenAI")
         notebook.add(tab_local, text="Paikallinen")
         notebook.add(tab_ui, text="Ulkoasu")
+        notebook.add(tab_camera, text="Kamera")
         # --- Tabs content ---
         # General
         g = tab_general
@@ -2058,6 +2120,124 @@ class JugiAIApp(tk.Tk):
         for i in range(3):
             u.columnconfigure(i, weight=1)
 
+        # Camera tab
+        c = tab_camera
+        row = 0
+        
+        # Manual camera configuration section
+        ttk.Label(c, text="Manuaalinen kamerayhteys", style="SectionTitle.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 12)
+        )
+        row += 1
+        
+        ttk.Label(c, text="Kameran IP-osoite:").grid(row=row, column=0, sticky=tk.W)
+        camera_ip_var = tk.StringVar(value=self.config_dict.get("camera_ip", ""))
+        ttk.Entry(c, textvariable=camera_ip_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Käyttäjätunnus:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_username_var = tk.StringVar(value=self.config_dict.get("camera_username", "admin"))
+        ttk.Entry(c, textvariable=camera_username_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Salasana:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_password_var = tk.StringVar(value=self.config_dict.get("camera_password", ""))
+        ttk.Entry(c, textvariable=camera_password_var, show="*").grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Portti:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_port_var = tk.IntVar(value=int(self.config_dict.get("camera_port", 8080)))
+        ttk.Spinbox(c, from_=1, to=65535, textvariable=camera_port_var, width=10).grid(
+            row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0)
+        )
+        row += 1
+        
+        ttk.Separator(c, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=3, sticky=tk.EW, pady=(16, 16))
+        row += 1
+        
+        # Camera discovery section
+        ttk.Label(c, text="Automaattinen kamerahaku", style="SectionTitle.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 12)
+        )
+        row += 1
+        
+        ttk.Label(c, text="Etsi kamerat WiFi-verkosta:").grid(row=row, column=0, sticky=tk.W)
+        discovery_status_var = tk.StringVar(value="Valmis")
+        ttk.Label(c, textvariable=discovery_status_var, style="Subtle.TLabel").grid(
+            row=row, column=1, sticky=tk.W, padx=(8, 0)
+        )
+        row += 1
+        
+        # Listbox for discovered cameras
+        cameras_frame = ttk.Frame(c)
+        cameras_frame.grid(row=row, column=0, columnspan=3, sticky=tk.NSEW, pady=(8, 0))
+        cameras_frame.columnconfigure(0, weight=1)
+        cameras_frame.rowconfigure(0, weight=1)
+        
+        cameras_listbox = tk.Listbox(cameras_frame, height=6)
+        cameras_listbox.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        cameras_scrollbar = ttk.Scrollbar(cameras_frame, orient=tk.VERTICAL, command=cameras_listbox.yview)
+        cameras_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        cameras_listbox.configure(yscrollcommand=cameras_scrollbar.set)
+        
+        # Load previously discovered cameras
+        discovered = self.config_dict.get("discovered_cameras", [])
+        for cam in discovered:
+            cameras_listbox.insert(tk.END, cam.get("name", f"{cam.get('ip')}:{cam.get('port')}"))
+        
+        row += 1
+        
+        # Discovery buttons
+        discovery_buttons = ttk.Frame(c)
+        discovery_buttons.grid(row=row, column=0, columnspan=3, sticky=tk.EW, pady=(8, 0))
+        
+        def start_discovery():
+            discovery_status_var.set("Etsitään kameroita...")
+            cameras_listbox.delete(0, tk.END)
+            dlg.update()
+            
+            def discovery_thread():
+                try:
+                    cameras = discover_cameras_on_network(timeout=1.5)
+                    self.config_dict["discovered_cameras"] = cameras
+                    
+                    def update_ui():
+                        cameras_listbox.delete(0, tk.END)
+                        for cam in cameras:
+                            cameras_listbox.insert(tk.END, cam.get("name", f"{cam.get('ip')}:{cam.get('port')}"))
+                        discovery_status_var.set(f"Löytyi {len(cameras)} kameraa")
+                    
+                    dlg.after(0, update_ui)
+                except Exception as e:
+                    def show_error():
+                        discovery_status_var.set(f"Virhe: {str(e)}")
+                    dlg.after(0, show_error)
+            
+            threading.Thread(target=discovery_thread, daemon=True).start()
+        
+        def use_selected_camera():
+            selection = cameras_listbox.curselection()
+            if not selection:
+                messagebox.showinfo("Valinta puuttuu", "Valitse ensin kamera listasta.")
+                return
+            
+            idx = selection[0]
+            cameras = self.config_dict.get("discovered_cameras", [])
+            if idx < len(cameras):
+                cam = cameras[idx]
+                camera_ip_var.set(cam.get("ip", ""))
+                camera_port_var.set(cam.get("port", 8080))
+                messagebox.showinfo("Kamera valittu", f"Kamera {cam.get('name')} valittu.\nMuista täyttää käyttäjätunnus ja salasana.")
+        
+        ttk.Button(discovery_buttons, text="Etsi kamerat", command=start_discovery).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(discovery_buttons, text="Käytä valittua kameraa", command=use_selected_camera).pack(side=tk.LEFT)
+        
+        row += 1
+        
+        for i in range(3):
+            c.columnconfigure(i, weight=1)
+
         # Buttons
         # Footer buttons (use pack to avoid mixing with grid in same container)
         btns = ttk.Frame(outer)
@@ -2103,6 +2283,16 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["font_size"] = max(9, min(20, int(fsize_var.get())))
             except Exception:
                 self.config_dict["font_size"] = 12
+            
+            # Save camera settings
+            self.config_dict["camera_ip"] = camera_ip_var.get().strip()
+            self.config_dict["camera_username"] = camera_username_var.get().strip()
+            self.config_dict["camera_password"] = camera_password_var.get().strip()
+            try:
+                self.config_dict["camera_port"] = int(camera_port_var.get())
+            except Exception:
+                self.config_dict["camera_port"] = 8080
+            
             self.save_config()
             self._sync_quick_controls()
             self._update_overview_metrics()
