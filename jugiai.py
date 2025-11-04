@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import sys
@@ -1237,7 +1238,7 @@ class JugiAIApp(tk.Tk):
             
         self.chat.insert(tk.END, f"JugiAI · {timestamp}\n", ("header_assistant",))
         self.stream_start_index = self.chat.index(tk.END)
-        self.chat.insert(tk.END, "…\n\n", ("role_assistant",))
+        self.chat.insert(tk.END, "...\n\n", ("role_assistant",))
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
 
@@ -1303,7 +1304,6 @@ class JugiAIApp(tk.Tk):
             pulse_range = 2
             
             # Create sine-wave pulse effect
-            import math
             angle = (step / 10.0) * math.pi * 2
             size_offset = int(pulse_range * math.sin(angle) / 2)
             
@@ -2288,7 +2288,12 @@ class JugiAIApp(tk.Tk):
                 # Fallback to tk.PhotoImage with subsample
                 img = tk.PhotoImage(file=path)
                 # Subsample to make it smaller (larger number = smaller image)
-                return img.subsample(img.width() // 24 + 1, img.height() // 24 + 1)
+                # Ensure we don't divide by zero and have at least factor of 1
+                subsample_x = max(1, img.width() // 24) if img.width() >= 24 else 1
+                subsample_y = max(1, img.height() // 24) if img.height() >= 24 else 1
+                if subsample_x > 1 or subsample_y > 1:
+                    return img.subsample(subsample_x, subsample_y)
+                return img
         except Exception as e:
             _log_warning(f"Failed to load message logo: {e}")
             return None
