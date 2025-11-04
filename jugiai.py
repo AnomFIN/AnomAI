@@ -1432,6 +1432,35 @@ class JugiAIApp(tk.Tk):
         else:
             yield from self._call_openai_stream()
 
+    def _validate_thread_count(self, requested_threads: int) -> Optional[int]:
+        """
+        Validate and cap thread count to reasonable limits.
+        
+        Args:
+            requested_threads: The number of threads requested by the user (0 = auto)
+        
+        Returns:
+            None for auto-detect, or a capped thread count
+        """
+        # 0 means auto-detect
+        if requested_threads <= 0:
+            return None
+        
+        # Get system CPU count
+        cpu_count = os.cpu_count() or 4
+        
+        # Cap at 4x CPU count (generous upper bound)
+        max_threads = cpu_count * 4
+        
+        if requested_threads > max_threads:
+            self._safe_log(
+                f"Thread count {requested_threads} exceeds recommended maximum {max_threads} "
+                f"(4x CPU count {cpu_count}). Capping to {max_threads}."
+            )
+            return max_threads
+        
+        return requested_threads
+
     def _build_messages_for_backend(self) -> List[Dict[str, Any]]:
         cfg = self.config_dict
         messages: List[Dict[str, Any]] = []
@@ -1540,9 +1569,13 @@ class JugiAIApp(tk.Tk):
             raise RuntimeError(_format_llama_import_error(exc)) from exc
 
         if self.llm is None or self.llm_model_path != model_path:
+            # Validate and cap thread count to reasonable limits
+            requested_threads = int(cfg.get("local_threads", 0))
+            n_threads_param = self._validate_thread_count(requested_threads)
+            
             self.llm = Llama(
                 model_path=model_path,
-                n_threads=int(cfg.get("local_threads", 0)) or None,
+                n_threads=n_threads_param,
                 verbose=False,
             )
             self.llm_model_path = model_path
@@ -1987,9 +2020,19 @@ class JugiAIApp(tk.Tk):
                 lpath_var.set(p)
         ttk.Button(l, text="Valitse…", command=choose_gguf).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
         row += 1
+        
+        # Calculate recommended thread range
+        cpu_count = os.cpu_count() or 4
+        max_recommended = cpu_count * 4
         ttk.Label(l, text="Säikeet (0 = auto):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         lthr_var = tk.IntVar(value=int(self.config_dict.get("local_threads", 0)))
         ttk.Entry(l, textvariable=lthr_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(
+            l, 
+            text=f"Suositus: 0 (auto) tai 1-{max_recommended} (max 4× CPU-ytimet: {cpu_count})",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
         for i in range(3):
             l.columnconfigure(i, weight=1)
@@ -2086,7 +2129,16 @@ class JugiAIApp(tk.Tk):
             self.config_dict["frequency_penalty"] = float(f"{fp_var.get():.3f}")
             self.config_dict["backend"] = backend_var.get().strip() or "openai"
             self.config_dict["local_model_path"] = lpath_var.get().strip()
-            self.config_dict["local_threads"] = int(lthr_var.get()) if str(lthr_var.get()).isdigit() else 0
+            
+            # Validate and save thread count
+            try:
+                thread_value = int(lthr_var.get())
+                # Ensure non-negative, 0 means auto
+                thread_value = max(0, thread_value)
+                self.config_dict["local_threads"] = thread_value
+            except (ValueError, TypeError):
+                self.config_dict["local_threads"] = 0
+            
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
             try:
