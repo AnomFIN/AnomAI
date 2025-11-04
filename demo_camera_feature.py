@@ -39,7 +39,7 @@ def demo_default_config():
     camera_settings = {
         "camera_ip": DEFAULT_CONFIG.get("camera_ip", ""),
         "camera_username": DEFAULT_CONFIG.get("camera_username", ""),
-        "camera_password": DEFAULT_CONFIG.get("camera_password", ""),
+        "camera_password": "<not shown for security>",  # Don't log actual password value
         "camera_port": DEFAULT_CONFIG.get("camera_port", 8080),
         "discovered_cameras": DEFAULT_CONFIG.get("discovered_cameras", []),
     }
@@ -77,10 +77,11 @@ def demo_config_save():
     """Demonstrate how camera configuration would be saved."""
     print_section("Camera Configuration Save Example")
     
+    # Note: This is example data only, not real credentials
     example_config = {
         "camera_ip": "192.168.1.100",
         "camera_username": "admin",
-        "camera_password": "******",  # Masked for display
+        "camera_password": "<hidden>",  # Password field exists but not logged
         "camera_port": 8080,
         "discovered_cameras": [
             {
