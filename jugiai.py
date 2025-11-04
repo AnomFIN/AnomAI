@@ -474,12 +474,9 @@ class JugiAIApp(tk.Tk):
         """Add smooth scrolling behavior to the chat area."""
         def smooth_scroll(event):
             try:
-                # Calculate scroll amount
+                # Calculate scroll amount - just use delta directly for smooth effect
                 delta = -1 if event.delta > 0 else 1
-                # Smooth scroll in smaller increments
-                for _ in range(3):
-                    self.chat.yview_scroll(delta // 3, "units")
-                    self.update_idletasks()
+                self.chat.yview_scroll(delta, "units")
                 return "break"
             except Exception:
                 pass
