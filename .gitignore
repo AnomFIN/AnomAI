@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+screenshot*.png
+config.json
+test_config.json

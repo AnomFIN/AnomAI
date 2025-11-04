@@ -1282,6 +1282,9 @@ class JugiAIApp(tk.Tk):
         color = colors.get(state, "#facc15")
         try:
             self.ping_canvas.itemconfig(self.ping_indicator, fill=color)
+            # Add subtle pulse animation for "ok" state
+            if state == "ok":
+                self._animate_ping_pulse()
         except Exception:
             pass
         if state == "ok" and latency is not None:
@@ -1290,6 +1293,40 @@ class JugiAIApp(tk.Tk):
             self.ping_var.set(f"PING: {latency} ms (varoitus)")
         else:
             self.ping_var.set("PING: -- ms (ei yhteyttä)")
+    
+    def _animate_ping_pulse(self, step: int = 0) -> None:
+        """Create a subtle pulsing animation for the ping indicator."""
+        if step >= 10:
+            return  # Animation complete
+        
+        try:
+            # Calculate size variation for pulse effect
+            base_size = 2
+            max_size = 14
+            pulse_range = 2
+            
+            # Create sine-wave pulse effect
+            import math
+            angle = (step / 10.0) * math.pi * 2
+            size_offset = int(pulse_range * math.sin(angle) / 2)
+            
+            new_coords = (
+                base_size - size_offset,
+                base_size - size_offset,
+                max_size + size_offset,
+                max_size + size_offset
+            )
+            
+            self.ping_canvas.coords(self.ping_indicator, *new_coords)
+            
+            # Schedule next step
+            if step < 9:
+                self.after(50, lambda: self._animate_ping_pulse(step + 1))
+            else:
+                # Reset to original size
+                self.ping_canvas.coords(self.ping_indicator, 2, 2, 14, 14)
+        except Exception:
+            pass
 
     def _refresh_ping(self) -> None:
         def worker() -> None:
@@ -1459,12 +1496,26 @@ class JugiAIApp(tk.Tk):
             self.typing_status_var.set("Työstetään pyyntöä…")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeBusy.TLabel")
+                # Add a subtle fade/pulse effect
+                self._animate_status_badge_change()
             self.send_btn.configure(state=tk.DISABLED)
         else:
             self.typing_status_var.set("Valmis")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeIdle.TLabel")
             self.send_btn.configure(state=tk.NORMAL)
+    
+    def _animate_status_badge_change(self) -> None:
+        """Add a subtle animation when the status badge changes."""
+        try:
+            # Simple flash effect by temporarily modifying relief
+            if hasattr(self, "typing_badge"):
+                original_style = self.typing_badge.cget("style")
+                # This creates a subtle visual feedback
+                self.typing_badge.configure(relief=tk.RAISED)
+                self.after(100, lambda: self.typing_badge.configure(relief=tk.FLAT) if hasattr(self, "typing_badge") else None)
+        except Exception:
+            pass
 
     # --- Model call ---
     def _worker_call_openai(self) -> None:
