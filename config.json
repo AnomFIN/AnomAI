@@ -1,0 +1,30 @@
+{
+  "api_key": "sk-test-dummy-key",
+  "model": "gpt-4o-mini",
+  "system_prompt": "You are JugiAI, a helpful assistant.",
+  "temperature": 0.7,
+  "top_p": 1.0,
+  "max_tokens": null,
+  "presence_penalty": 0.0,
+  "frequency_penalty": 0.0,
+  "backend": "openai",
+  "show_background": true,
+  "background_path": "",
+  "background_subsample": 2,
+  "background_opacity": 0.18,
+  "font_size": 12,
+  "profiles": {
+    "AnomFIN · AnomTools": {
+      "name": "AnomFIN · AnomTools",
+      "model": "gpt-4o-mini",
+      "system_prompt": "You are JugiAI, a helpful assistant.",
+      "temperature": 0.7,
+      "top_p": 1.0,
+      "max_tokens": null,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0,
+      "backend": "openai"
+    }
+  },
+  "active_profile": "AnomFIN · AnomTools"
+}
