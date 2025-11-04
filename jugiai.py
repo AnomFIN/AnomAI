@@ -784,7 +784,17 @@ class JugiAIApp(tk.Tk):
             backend_label = "Paikallinen"
         else:
             backend_label = backend.title()
-        model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
+        
+        # For local backend, extract model name from the file path
+        if backend == "local":
+            local_model_path = (self.config_dict.get("local_model_path") or "").strip()
+            if local_model_path:
+                # Extract filename without extension
+                model = os.path.splitext(os.path.basename(local_model_path))[0]
+            else:
+                model = "ei valittu"
+        else:
+            model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
         return f"{backend_label} · {model}"
 
     def _update_overview_metrics(self) -> None:
@@ -2069,6 +2079,7 @@ class JugiAIApp(tk.Tk):
                 self._preview_watermark_opacity(original_opacity)
             else:
                 self._remove_watermark_overlay()
+            dlg.grab_release()
             dlg.destroy()
 
         ttk.Button(btns, text="Sulje tallentamatta", command=cancel_and_close).pack(side=tk.RIGHT)
@@ -2113,6 +2124,7 @@ class JugiAIApp(tk.Tk):
             fs = int(self.config_dict.get("font_size", 12))
             self.chat.configure(font=("Segoe UI", fs))
             self.input.configure(font=("Segoe UI", fs))
+            dlg.grab_release()
             dlg.destroy()
 
         ttk.Button(btns, text="Tallenna", command=save_and_close).pack(side=tk.RIGHT, padx=(0, 8))
