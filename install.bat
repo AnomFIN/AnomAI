@@ -81,7 +81,7 @@ if not "%PY_BITS%"=="64" (
 )
 
 REM Create virtual environment
-if not exist ".venv\Scripts\activate" (
+if not exist ".venv\Scripts\activate.bat" (
   echo Creating virtual environment in .venv...
   %PY_CMD% -m venv .venv
   if %errorlevel% neq 0 (
@@ -94,7 +94,7 @@ if not exist ".venv\Scripts\activate" (
   echo Using existing virtual environment .venv
 )
 
-call ".venv\Scripts\activate"
+call ".venv\Scripts\activate.bat"
 
 REM Upgrade pip, setuptools, wheel to avoid build issues (e.g., Pillow)
 echo Upgrading pip, setuptools and wheel...
@@ -140,7 +140,7 @@ if /I "%INSTALL_LLAMA%"=="N" (
 echo ---
 echo Install completed successfully.
 echo To activate the virtual environment later:
-echo    .\.venv\Scripts\activate
+echo    .\.venv\Scripts\activate.bat
 echo Run your scripts with the activated environment (python ...).
 call :maybe_pause
 endlocal
