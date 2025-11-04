@@ -45,7 +45,7 @@ PIL = __import__(module_name)
 - `pillow>=8.0.0`: Optional but recommended for image handling
 
 **Optional Dependencies:**
-- `llama-cpp-python`: For local GGUF models (requires special installation with `--prefer-binary`)
+- `llama-cpp-python`: For local GGUF models (requires special pip installation: `pip install --prefer-binary llama-cpp-python`)
 - Handle optional dependencies gracefully with try/except and feature flags
 
 **When adding new dependencies:**
@@ -125,7 +125,7 @@ except:  # BAD - catches everything, no user feedback
 
 **Character Encoding:**
 - Always use UTF-8 encoding for file I/O: `open(file, 'r', encoding='utf-8')`
-- Set console encoding to UTF-8: `chcp 65001`
+- Batch scripts should set console encoding to UTF-8 with: `chcp 65001` (Windows command prompt command)
 - Handle BOM correctly in batch scripts (avoid it)
 - Test with non-ASCII characters (ääkköset)
 
@@ -210,13 +210,16 @@ import unittest
 from playback_utils import clamp_font_size, MIN_FONT_SIZE, MAX_FONT_SIZE
 
 class TestFontSizing(unittest.TestCase):
-    def test_clamp_within_bounds(self):
-        self.assertEqual(clamp_font_size(12, 1), 13)
+    def test_increase_within_bounds(self):
+        """Test that font size increases correctly within bounds."""
+        self.assertEqual(clamp_font_size(12, 2), 14)
     
-    def test_clamp_at_upper_bound(self):
+    def test_upper_bound(self):
+        """Test that font size doesn't exceed maximum."""
         self.assertEqual(clamp_font_size(MAX_FONT_SIZE, 1), MAX_FONT_SIZE)
     
-    def test_clamp_at_lower_bound(self):
+    def test_decrease_with_lower_bound(self):
+        """Test that font size doesn't go below minimum."""
         self.assertEqual(clamp_font_size(MIN_FONT_SIZE, -1), MIN_FONT_SIZE)
 ```
 
@@ -369,9 +372,9 @@ file = open("../config.json")  # BAD - breaks when packaged
 - Use conventional commit format when appropriate
 
 **Branch Strategy:**
-- Feature branches: `feature/description`
-- Bug fixes: `fix/description`
-- Copilot branches: `copilot/description`
+- Feature branches: `feature/brief-description` (e.g., `feature/add-voice-recording`)
+- Bug fixes: `fix/issue-number-description` (e.g., `fix/42-api-timeout`)
+- Copilot branches: `copilot/improvement-description` (e.g., `copilot/setup-copilot-instructions`)
 
 **Pre-Commit Checks:**
 - Run tests: `python -m unittest discover -s tests`
@@ -483,7 +486,7 @@ Before submitting code, verify:
 - [ ] New dependencies are documented and justified
 - [ ] Code follows existing patterns and style
 - [ ] Documentation is updated as needed
-- [ ] Windows batch files use UTF-8 without BOM, CRLF line endings
+- [ ] Windows batch files (e.g., `build_exe.bat`, `install.bat`) use UTF-8 without BOM, CRLF line endings
 
 ---
 
