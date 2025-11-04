@@ -45,7 +45,7 @@ PIL = __import__(module_name)
 - `pillow>=8.0.0`: Optional but recommended for image handling
 
 **Optional Dependencies:**
-- `llama-cpp-python`: For local GGUF models (requires special pip installation: `pip install --prefer-binary llama-cpp-python`)
+- `llama-cpp-python`: For local GGUF models (requires special pip installation: `pip install --upgrade --prefer-binary llama-cpp-python`)
 - Handle optional dependencies gracefully with try/except and feature flags
 
 **When adding new dependencies:**
@@ -125,8 +125,8 @@ except:  # BAD - catches everything, no user feedback
 
 **Character Encoding:**
 - Always use UTF-8 encoding for file I/O: `open(file, 'r', encoding='utf-8')`
-- Batch scripts should set console encoding to UTF-8 with: `chcp 65001` (Windows command prompt command)
-- Handle BOM correctly in batch scripts (avoid it)
+- Batch scripts (.bat files) should set console encoding to UTF-8 at the top: `chcp 65001 >nul`
+- Handle BOM correctly in batch scripts (avoid it - use UTF-8 without BOM)
 - Test with non-ASCII characters (ääkköset)
 
 **Line Endings:**
@@ -249,7 +249,7 @@ class TestFontSizing(unittest.TestCase):
 **Build Validation:**
 ```bash
 # After building, always test:
-.\dist\AnomAI\AnomAI.exe  # Quick launch test
+.\dist\AnomAI\AnomAI.exe  # Test the executable in dist directory
 # Check for missing dependencies in error logs
 # Verify all features work in the packaged version
 ```
@@ -486,7 +486,7 @@ Before submitting code, verify:
 - [ ] New dependencies are documented and justified
 - [ ] Code follows existing patterns and style
 - [ ] Documentation is updated as needed
-- [ ] Windows batch files (e.g., `build_exe.bat`, `install.bat`) use UTF-8 without BOM, CRLF line endings
+- [ ] Windows batch files (e.g., `build_exe.bat`, `install.bat`) use UTF-8 encoding without BOM and CRLF line endings (project requirement)
 
 ---
 
