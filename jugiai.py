@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import sys
@@ -293,6 +294,10 @@ class JugiAIApp(tk.Tk):
         self.watermark_enabled = True  # Flag to track if watermark loading is available
         self.llm = None
         self.llm_model_path = None
+        
+        # Logo for messages
+        self._msg_logo_img = None
+        self._logo_refs: List[Any] = []  # Keep references to prevent garbage collection
 
         self._is_loading_history = False
         self._history_viewer: Dict[str, Any] | None = None
@@ -458,10 +463,60 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+        
+        # Add smooth scroll animation support
+        self._add_smooth_scroll_bindings()
+        
+        # Add aesthetic enhancements
+        self._add_button_hover_effects()
 
     def _safe_log(self, *args, **kwargs):
         try:
             print("[JugiAI]", *args, **kwargs)
+        except Exception:
+            pass
+    
+    def _add_smooth_scroll_bindings(self) -> None:
+        """Add smooth scrolling behavior to the chat area."""
+        def smooth_scroll(event):
+            try:
+                # Calculate scroll amount - just use delta directly for smooth effect
+                delta = -1 if event.delta > 0 else 1
+                self.chat.yview_scroll(delta, "units")
+                return "break"
+            except Exception:
+                pass
+        
+        try:
+            self.chat.bind("<MouseWheel>", smooth_scroll)
+        except Exception:
+            pass
+    
+    def _add_button_hover_effects(self) -> None:
+        """Add subtle hover effects to enhance user experience."""
+        def on_enter(event):
+            try:
+                widget = event.widget
+                if isinstance(widget, tk.Widget):
+                    # Store original cursor
+                    widget._original_cursor = widget.cget("cursor") if hasattr(widget, "cget") else "arrow"
+                    widget.configure(cursor="hand2")
+            except Exception:
+                pass
+        
+        def on_leave(event):
+            try:
+                widget = event.widget
+                if isinstance(widget, tk.Widget) and hasattr(widget, "_original_cursor"):
+                    widget.configure(cursor=widget._original_cursor)
+            except Exception:
+                pass
+        
+        # Apply to send button if it exists
+        try:
+            if hasattr(self, "send_btn"):
+                self.send_btn.bind("<Enter>", on_enter)
+                self.send_btn.bind("<Leave>", on_leave)
         except Exception:
             pass
 
@@ -580,7 +635,7 @@ class JugiAIApp(tk.Tk):
             "last": tk.StringVar(value="–"),
         }
 
-        header = ttk.Frame(root, style="Nav.TFrame", padding=(24, 20))
+        header = ttk.Frame(root, style="Nav.TFrame", padding=(16, 12))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         header.columnconfigure(1, weight=1)
@@ -588,12 +643,12 @@ class JugiAIApp(tk.Tk):
 
         brand_box = ttk.Frame(header, style="Nav.TFrame")
         brand_box.grid(row=0, column=0, sticky="w")
-        ttk.Label(brand_box, text="JugiAI Command Deck", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(brand_box, text="JugiAI", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(
             brand_box,
-            text="AnomFIN · Strateginen tekoälytyökalu",
+            text="AnomFIN · Tekoälytyökalu",
             style="NavSubtitle.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(2, 0))
 
         status_box = ttk.Frame(header, style="Nav.TFrame")
         status_box.grid(row=0, column=1, sticky="w", padx=(24, 0))
@@ -627,22 +682,22 @@ class JugiAIApp(tk.Tk):
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_quick_change)
 
         buttons_bar = ttk.Frame(control_box, style="Nav.TFrame")
-        buttons_bar.grid(row=1, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        buttons_bar.grid(row=1, column=0, columnspan=2, sticky="e", pady=(8, 0))
         ttk.Button(buttons_bar, text="Profiilit", style="Toolbar.TButton", command=self.open_profiles).pack(
-            side=tk.LEFT, padx=(0, 8)
+            side=tk.LEFT, padx=(0, 6)
         )
         ttk.Button(buttons_bar, text="Tyhjennä", style="Toolbar.TButton", command=self.clear_history).pack(
-            side=tk.LEFT, padx=(0, 8)
+            side=tk.LEFT, padx=(0, 6)
         )
         ttk.Button(
             buttons_bar,
             text="Tallenteet 🎞️",
             style="Toolbar.TButton",
             command=self.open_history_viewer,
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        ).pack(side=tk.LEFT, padx=(0, 6))
         zoom_frame = ttk.Frame(buttons_bar, style="Nav.TFrame")
-        zoom_frame.pack(side=tk.LEFT, padx=(4, 8))
-        ttk.Label(zoom_frame, text="Zoom", style="NavSubtitle.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        zoom_frame.pack(side=tk.LEFT, padx=(2, 6))
+        ttk.Label(zoom_frame, text="Zoom", style="NavSubtitle.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             zoom_frame,
             text="−",
@@ -656,7 +711,7 @@ class JugiAIApp(tk.Tk):
             width=3,
             style="Toolbar.TButton",
             command=lambda: self.adjust_font_size(1),
-        ).pack(side=tk.LEFT, padx=(6, 0))
+        ).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(buttons_bar, text="Asetukset ⚙", style="Toolbar.TButton", command=self.open_settings).pack(
             side=tk.LEFT
         )
@@ -676,7 +731,7 @@ class JugiAIApp(tk.Tk):
             card = tk.Frame(
                 overview,
                 bg="#0f172a",
-                highlightbackground="#1f2937",
+                highlightbackground="#14f1ff" if idx == 0 else "#1f2937",
                 highlightthickness=1,
                 bd=0,
                 padx=18,
@@ -763,7 +818,7 @@ class JugiAIApp(tk.Tk):
 
         ttk.Separator(composer, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(12, 12))
 
-        self.input = tk.Text(composer, height=5, wrap=tk.WORD, relief=tk.FLAT)
+        self.input = tk.Text(composer, height=3, wrap=tk.WORD, relief=tk.FLAT)
         self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
             bg="#071427",
@@ -1219,10 +1274,19 @@ class JugiAIApp(tk.Tk):
         self.current_stream_text = ""
         self.stream_start_index = None
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, "▮ ", ("separator_assistant",))
+        
+        # Try to show logo instead of text prefix
+        logo_img = self._load_message_logo()
+        if logo_img:
+            self._logo_refs.append(logo_img)  # Keep reference
+            self.chat.image_create(tk.END, image=logo_img)
+            self.chat.insert(tk.END, " ", ("separator_assistant",))
+        else:
+            self.chat.insert(tk.END, "▮ ", ("separator_assistant",))
+            
         self.chat.insert(tk.END, f"JugiAI · {timestamp}\n", ("header_assistant",))
         self.stream_start_index = self.chat.index(tk.END)
-        self.chat.insert(tk.END, "JugiAI työskentelee…\n\n", ("role_assistant",))
+        self.chat.insert(tk.END, "...\n\n", ("role_assistant",))
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
 
@@ -1264,6 +1328,9 @@ class JugiAIApp(tk.Tk):
         color = colors.get(state, "#facc15")
         try:
             self.ping_canvas.itemconfig(self.ping_indicator, fill=color)
+            # Add subtle pulse animation for "ok" state
+            if state == "ok":
+                self._animate_ping_pulse()
         except Exception:
             pass
         if state == "ok" and latency is not None:
@@ -1272,6 +1339,39 @@ class JugiAIApp(tk.Tk):
             self.ping_var.set(f"PING: {latency} ms (varoitus)")
         else:
             self.ping_var.set("PING: -- ms (ei yhteyttä)")
+    
+    def _animate_ping_pulse(self, step: int = 0) -> None:
+        """Create a subtle pulsing animation for the ping indicator."""
+        if step >= 10:
+            return  # Animation complete
+        
+        try:
+            # Calculate size variation for pulse effect
+            base_size = 2
+            max_size = 14
+            pulse_range = 2
+            
+            # Create sine-wave pulse effect
+            angle = (step / 10.0) * math.pi * 2
+            size_offset = int(pulse_range * math.sin(angle) / 2)
+            
+            new_coords = (
+                base_size - size_offset,
+                base_size - size_offset,
+                max_size + size_offset,
+                max_size + size_offset
+            )
+            
+            self.ping_canvas.coords(self.ping_indicator, *new_coords)
+            
+            # Schedule next step
+            if step < 9:
+                self.after(50, lambda: self._animate_ping_pulse(step + 1))
+            else:
+                # Reset to original size
+                self.ping_canvas.coords(self.ping_indicator, 2, 2, 14, 14)
+        except Exception:
+            pass
 
     def _refresh_ping(self) -> None:
         def worker() -> None:
@@ -1357,7 +1457,19 @@ class JugiAIApp(tk.Tk):
         content = (content or "").strip()
 
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, "▮ ", (separator_tag,))
+        
+        # For assistant messages, try to show logo instead of text prefix
+        if role == "assistant":
+            logo_img = self._load_message_logo()
+            if logo_img:
+                self._logo_refs.append(logo_img)  # Keep reference
+                self.chat.image_create(tk.END, image=logo_img)
+                self.chat.insert(tk.END, " ", (separator_tag,))
+            else:
+                self.chat.insert(tk.END, "▮ ", (separator_tag,))
+        else:
+            self.chat.insert(tk.END, "▮ ", (separator_tag,))
+            
         self.chat.insert(tk.END, f"{display_name} · {ts}\n", (header_tag,))
         if content:
             self.chat.insert(tk.END, content + "\n", (body_tag,))
@@ -1434,12 +1546,26 @@ class JugiAIApp(tk.Tk):
             self.typing_status_var.set("Työstetään pyyntöä…")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeBusy.TLabel")
+                # Add a subtle fade/pulse effect
+                self._animate_status_badge_change()
             self.send_btn.configure(state=tk.DISABLED)
         else:
             self.typing_status_var.set("Valmis")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeIdle.TLabel")
             self.send_btn.configure(state=tk.NORMAL)
+    
+    def _animate_status_badge_change(self) -> None:
+        """Add a subtle animation when the status badge changes."""
+        try:
+            # Simple flash effect by temporarily modifying relief
+            if hasattr(self, "typing_badge"):
+                original_style = self.typing_badge.cget("style")
+                # This creates a subtle visual feedback
+                self.typing_badge.configure(relief=tk.RAISED)
+                self.after(100, lambda: self.typing_badge.configure(relief=tk.FLAT) if hasattr(self, "typing_badge") else None)
+        except Exception:
+            pass
 
     # --- Model call ---
     def _worker_call_openai(self) -> None:
@@ -2273,6 +2399,35 @@ class JugiAIApp(tk.Tk):
             self._app_icon_ref = img
         except Exception:
             pass
+    
+    def _load_message_logo(self) -> Optional[tk.PhotoImage]:
+        """Load and scale the logo for inline message display."""
+        path = self._resolve_default_logo()
+        if not path or not os.path.exists(path):
+            return None
+        
+        try:
+            if PIL_AVAILABLE:
+                # Use PIL for better quality scaling
+                from PIL import Image, ImageTk
+                pil_img = Image.open(path)
+                # Scale to approximately 24x24 pixels for inline display
+                pil_img.thumbnail((24, 24), Image.Resampling.LANCZOS)
+                return ImageTk.PhotoImage(pil_img)
+            else:
+                # Fallback to tk.PhotoImage with subsample
+                img = tk.PhotoImage(file=path)
+                # Subsample to make it smaller (larger number = smaller image)
+                # Ensure we don't divide by zero and have at least factor of 1
+                subsample_x = max(1, img.width() // 24) if img.width() >= 24 else 1
+                subsample_y = max(1, img.height() // 24) if img.height() >= 24 else 1
+                if subsample_x > 1 or subsample_y > 1:
+                    return img.subsample(subsample_x, subsample_y)
+                return img
+        except Exception as e:
+            _log_warning(f"Failed to load message logo: {e}")
+            return None
+
 
     def _load_watermark_image(self, respect_visibility: bool = True) -> None:
         """
