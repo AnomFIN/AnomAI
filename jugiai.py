@@ -1774,9 +1774,12 @@ class JugiAIApp(tk.Tk):
 
         if self.llm is None or self.llm_model_path != model_path:
             self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
+            # Validate and get thread count
+            requested_threads = int(cfg.get("local_threads", 0))
+            validated_threads = self._validate_thread_count(requested_threads)
             self.llm = Llama(
                 model_path=model_path,
-                n_threads=n_threads_param,
+                n_threads=validated_threads,
                 verbose=False,
             )
             self.llm_model_path = model_path
@@ -2176,7 +2179,7 @@ class JugiAIApp(tk.Tk):
         )
         _bind_scale_readout(pp_var, pp_readout, "{:+.2f}")
         row += 1
-        ttk.Label(g, text="Kannustaa uusiin aiheisiin – suurempi arvo vähentää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(g, text="Positiivinen arvo kannustaa uusiin aiheisiin, negatiivinen pysyy aiheessa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="frequency_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         fp_var = tk.DoubleVar(value=float(self.config_dict.get("frequency_penalty", 0.0)))
@@ -2190,7 +2193,7 @@ class JugiAIApp(tk.Tk):
         )
         _bind_scale_readout(fp_var, fp_readout, "{:+.2f}")
         row += 1
-        ttk.Label(g, text="Vähentää saman sanan toistumista useita kertoja peräkkäin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(g, text="Positiivinen arvo vähentää toistoa, negatiivinen lisää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         for i in range(2):
             g.columnconfigure(i, weight=1)
