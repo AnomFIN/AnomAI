@@ -1775,7 +1775,10 @@ class JugiAIApp(tk.Tk):
         if self.llm is None or self.llm_model_path != model_path:
             self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
             # Validate and get thread count
-            requested_threads = int(cfg.get("local_threads", 0))
+            try:
+                requested_threads = int(cfg.get("local_threads", 0))
+            except (ValueError, TypeError):
+                requested_threads = 0  # Default to auto
             validated_threads = self._validate_thread_count(requested_threads)
             self.llm = Llama(
                 model_path=model_path,
