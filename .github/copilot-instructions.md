@@ -175,7 +175,7 @@ The application supports full offline operation with local models:
 ### Updating Dependencies
 
 1. Check if the dependency is truly necessary
-2. For Pillow: Ensure version supports Python 3.9+ (>=8.0.0)
+2. For Pillow: Ensure version supports Python 3.10+ (>=8.0.0)
 3. Do NOT add llama-cpp-python to requirements.txt
 4. Test in both development and PyInstaller build
 
