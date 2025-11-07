@@ -2223,7 +2223,10 @@ class JugiAIApp(tk.Tk):
         lpath_var = tk.StringVar(value=self.config_dict.get("local_model_path", ""))
         ttk.Entry(l, textvariable=lpath_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0))
         def choose_gguf():
-            p = filedialog.askopenfilename(filetypes=[("GGUF models", "*.gguf"), ("All files", "*.*")])
+            p = filedialog.askopenfilename(
+                title="Valitse GGUF-malli",
+                filetypes=[("GGUF models", "*.gguf"), ("All files", "*.*")]
+            )
             if p:
                 lpath_var.set(p)
         ttk.Button(l, text="Valitse…", command=choose_gguf).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
@@ -2252,7 +2255,10 @@ class JugiAIApp(tk.Tk):
         bg_var = tk.StringVar(value=self.config_dict.get("background_path", ""))
         ttk.Entry(u, textvariable=bg_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         def choose_bg():
-            p = filedialog.askopenfilename(filetypes=[("Kuvat", "*.png;*.gif"), ("Kaikki", "*.*")])
+            p = filedialog.askopenfilename(
+                title="Valitse taustakuva",
+                filetypes=[("Kuvat", "*.png;*.gif"), ("Kaikki", "*.*")]
+            )
             if p:
                 bg_var.set(p)
         ttk.Button(u, text="Valitse…", command=choose_bg).grid(row=row, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
