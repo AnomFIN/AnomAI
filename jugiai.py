@@ -251,6 +251,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Paikallinen malli
     "local_model_path": "",
     "local_threads": 0,  # 0 = auto
+    "use_gpu": "cpu",  # "cpu", "gpu", or "both"
+    "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
@@ -1846,9 +1848,24 @@ class JugiAIApp(tk.Tk):
             except (ValueError, TypeError):
                 requested_threads = 0  # Default to auto
             validated_threads = self._validate_thread_count(requested_threads)
+            
+            # Determine GPU layers based on use_gpu setting
+            use_gpu = cfg.get("use_gpu", "cpu")
+            if use_gpu == "cpu":
+                n_gpu_layers = 0
+            elif use_gpu == "gpu":
+                n_gpu_layers = -1  # All layers to GPU
+            else:  # "both"
+                try:
+                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
+                except (ValueError, TypeError):
+                    n_gpu_layers = 0
+            
+            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
             self.llm = Llama(
                 model_path=model_path,
                 n_threads=validated_threads,
+                n_gpu_layers=n_gpu_layers,
                 verbose=False,
             )
             self.llm_model_path = model_path
@@ -2313,6 +2330,35 @@ class JugiAIApp(tk.Tk):
             style="Subtle.TLabel"
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
+        
+        # GPU settings
+        ttk.Label(l, text="GPU-käyttö:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        use_gpu_var = tk.StringVar(value=self.config_dict.get("use_gpu", "cpu"))
+        gpu_frame = ttk.Frame(l)
+        gpu_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Radiobutton(gpu_frame, text="CPU", variable=use_gpu_var, value="cpu").pack(side=tk.LEFT)
+        ttk.Radiobutton(gpu_frame, text="GPU", variable=use_gpu_var, value="gpu").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Radiobutton(gpu_frame, text="Molemmat", variable=use_gpu_var, value="both").pack(side=tk.LEFT, padx=(12, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="CPU = vain prosessori, GPU = kaikki kerrokseet GPU:lle, Molemmat = osa GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
+        # GPU layers count (for "both" mode)
+        ttk.Label(l, text="GPU-kerrokset (Molemmat-tila):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        n_gpu_layers_var = tk.IntVar(value=int(self.config_dict.get("n_gpu_layers", 0)))
+        ttk.Entry(l, textvariable=n_gpu_layers_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="0 = ei GPU:ta, -1 = kaikki GPU:lle, >0 = määritetty kerrosmäärä GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
         for i in range(3):
             l.columnconfigure(i, weight=1)
 
@@ -2539,6 +2585,18 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["local_threads"] = thread_value
             except (ValueError, TypeError):
                 self.config_dict["local_threads"] = 0
+            
+            # Save GPU settings
+            use_gpu_value = use_gpu_var.get().strip()
+            if use_gpu_value not in ["cpu", "gpu", "both"]:
+                use_gpu_value = "cpu"
+            self.config_dict["use_gpu"] = use_gpu_value
+            
+            try:
+                n_gpu_layers_value = int(n_gpu_layers_var.get())
+                self.config_dict["n_gpu_layers"] = n_gpu_layers_value
+            except (ValueError, TypeError):
+                self.config_dict["n_gpu_layers"] = 0
             
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
