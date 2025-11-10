@@ -137,6 +137,23 @@ if /I "%INSTALL_LLAMA%"=="N" (
   )
 )
 
+REM Build the EXE using build_exe.bat
+echo.
+echo ---
+echo Building AnomAI.exe...
+echo ---
+if exist build_exe.bat (
+  call build_exe.bat
+  if %errorlevel% neq 0 (
+    echo WARNING: EXE build failed. You can build it manually later by running build_exe.bat
+    echo The Python version is fully functional.
+  ) else (
+    echo EXE built successfully.
+  )
+) else (
+  echo WARNING: build_exe.bat not found. Skipping EXE build.
+)
+
 echo ---
 echo Install completed successfully.
 echo To activate the virtual environment later:
