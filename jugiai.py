@@ -2594,6 +2594,10 @@ class JugiAIApp(tk.Tk):
             
             try:
                 n_gpu_layers_value = int(n_gpu_layers_var.get())
+                # Validate: -1 for all layers, 0 for CPU only, or positive for specific count
+                # Other negative values are not valid, default to 0
+                if n_gpu_layers_value < -1:
+                    n_gpu_layers_value = 0
                 self.config_dict["n_gpu_layers"] = n_gpu_layers_value
             except (ValueError, TypeError):
                 self.config_dict["n_gpu_layers"] = 0

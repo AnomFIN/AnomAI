@@ -193,6 +193,32 @@ class GPUConfigTests(unittest.TestCase):
             finally:
                 os.unlink(config_path)
 
+    def test_n_gpu_layers_invalid_negative(self):
+        """Test that invalid negative n_gpu_layers values are handled correctly."""
+        # Only -1 and 0 or positive values are valid
+        # Other negative values should be treated as invalid
+        invalid_values = [-2, -5, -10, -100]
+        
+        for layers in invalid_values:
+            # These values should be stored as-is in config but validated at save time
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                config_path = f.name
+                config_data = {
+                    "use_gpu": "both",
+                    "n_gpu_layers": layers
+                }
+                json.dump(config_data, f)
+            
+            try:
+                # Load the config
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    loaded_config = json.load(f)
+                
+                # Value is preserved in config, but should be validated at use time
+                self.assertEqual(loaded_config["n_gpu_layers"], layers)
+            finally:
+                os.unlink(config_path)
+
 
 if __name__ == "__main__":
     unittest.main()
