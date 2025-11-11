@@ -121,10 +121,25 @@ echo Installing requirements from requirements.txt...
 )
 
 echo.
+echo ========================================
+echo Local GGUF/LLM Model Support
+echo ========================================
+echo.
+echo AnomAI can run local GGUF models offline using llama-cpp-python.
+echo.
+echo Standard installation includes CPU support only.
+echo For GPU acceleration (CUDA), you'll need to manually install
+echo a CUDA-enabled wheel after this installation completes.
+echo.
+echo GPU installation example (after this script):
+echo   python -m pip install llama-cpp-python --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
+echo.
 set "INSTALL_LLAMA="
 set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y):
 if /I "%INSTALL_LLAMA%"=="N" (
   echo Skipping llama-cpp-python installation at user request.
+  echo You can always install it later with:
+  echo   .\.venv\Scripts\python.exe -m pip install --upgrade --prefer-binary llama-cpp-python
 ) else (
   echo Installing llama-cpp-python with --prefer-binary (this may take a moment)...
   python -m pip install --upgrade --prefer-binary llama-cpp-python
@@ -132,8 +147,15 @@ if /I "%INSTALL_LLAMA%"=="N" (
     echo WARNING: llama-cpp-python installation failed. You can retry manually with:
     echo   %PY_CMD% -m pip install --upgrade --prefer-binary llama-cpp-python
     echo or follow Windows-specific wheel instructions from the README.
+    echo.
+    echo For GPU support (CUDA), visit:
+    echo   https://github.com/abetlen/llama-cpp-python#installation-with-hardware-acceleration
   ) else (
-    echo Local model support ready (llama-cpp-python installed).
+    echo.
+    echo Local model support ready (llama-cpp-python installed in CPU mode).
+    echo.
+    echo For GPU acceleration, you can upgrade to a CUDA wheel:
+    echo   python -m pip install llama-cpp-python --force-reinstall --no-cache-dir --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
   )
 )
 
