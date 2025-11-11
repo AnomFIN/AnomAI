@@ -181,36 +181,43 @@ if exist requirements.txt (
 )
 
 echo.
-echo ============================================
-echo    Step 4: Local Model Support (Optional)
-echo ============================================
+echo ========================================
+echo Local GGUF/LLM Model Support
+echo ========================================
 echo.
-echo Local model support allows you to run AI models offline using GGUF files.
-echo This is optional - you can use OpenAI API without it.
+echo AnomAI can run local GGUF models offline using llama-cpp-python.
 echo.
-
+echo Standard installation includes CPU support only.
+echo For GPU acceleration (CUDA), you'll need to manually install
+echo a CUDA-enabled wheel after this installation completes.
+echo.
+echo GPU installation example (after this script):
+echo   python -m pip install llama-cpp-python --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
+echo.
 set "INSTALL_LLAMA="
 set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y): 
 if /I "%INSTALL_LLAMA%"=="" set "INSTALL_LLAMA=Y"
 if /I "%INSTALL_LLAMA%"=="N" (
-  echo [SKIP] Skipping llama-cpp-python installation at user request.
+  echo Skipping llama-cpp-python installation at user request.
+  echo You can always install it later with:
+  echo   .\.venv\Scripts\python.exe -m pip install --upgrade --prefer-binary llama-cpp-python
 ) else (
   echo Installing llama-cpp-python with --prefer-binary...
   echo This may take several minutes...
   python -m pip install --upgrade --prefer-binary llama-cpp-python
-  if !errorlevel! neq 0 (
-    echo [WARNING] llama-cpp-python installation failed.
+  if %errorlevel% neq 0 (
+    echo WARNING: llama-cpp-python installation failed. You can retry manually with:
+    echo   %PY_CMD% -m pip install --upgrade --prefer-binary llama-cpp-python
+    echo or follow Windows-specific wheel instructions from the README.
     echo.
-    echo You can retry manually later with:
-    echo   .\.venv\Scripts\python.exe -m pip install --upgrade --prefer-binary llama-cpp-python
-    echo.
-    echo Or follow Windows-specific wheel instructions from:
-    echo https://github.com/abetlen/llama-cpp-python/releases
-    echo.
-    echo The application will still work with OpenAI API without local support.
-    echo.
+    echo For GPU support (CUDA), visit:
+    echo   https://github.com/abetlen/llama-cpp-python#installation-with-hardware-acceleration
   ) else (
-    echo [OK] Local model support ready (llama-cpp-python installed).
+    echo.
+    echo Local model support ready (llama-cpp-python installed in CPU mode).
+    echo.
+    echo For GPU acceleration, you can upgrade to a CUDA wheel:
+    echo   python -m pip install llama-cpp-python --force-reinstall --no-cache-dir --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
   )
 )
 

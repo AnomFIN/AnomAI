@@ -251,6 +251,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Paikallinen malli
     "local_model_path": "",
     "local_threads": 0,  # 0 = auto
+    "use_gpu": "cpu",  # "cpu", "gpu", or "both"
+    "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
@@ -343,6 +345,194 @@ def discover_cameras_on_network(timeout: float = 2.0) -> List[Dict[str, Any]]:
     return discovered
 
 
+class LocalModelManager:
+    """Manages the lifecycle of a local GGUF model with GPU support and fallback."""
+    
+    def __init__(self):
+        self.llm = None
+        self.model_path = None
+        self.loaded_params = {}
+        self._loading = False
+    
+    def get_model(self, config: Dict[str, Any], safe_log_fn) -> Any:
+        """
+        Get or load the local model based on config.
+        Returns the Llama instance or raises RuntimeError.
+        """
+        model_path = (config.get("local_model_path") or "").strip()
+        
+        # Validate model path
+        if not model_path:
+            raise RuntimeError(
+                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse malli."
+            )
+        
+        if not os.path.exists(model_path):
+            raise RuntimeError(
+                f"Paikallista mallia ei löydy: {model_path}\n"
+                "Tarkista polku asetuksista tai lataa malli uudelleen."
+            )
+        
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Virheellinen mallitiedosto: {model_path}\n"
+                "Polku on hakemisto, ei tiedosto."
+            )
+        
+        # Build current parameters
+        current_params = {
+            "n_ctx": int(config.get("local_n_ctx", 4096)),
+            "n_batch": int(config.get("local_n_batch", 256)),
+            "n_threads": config.get("local_threads", 0),
+            "n_gpu_layers": int(config.get("local_gpu_layers", -1)),
+            "prefer_gpu": bool(config.get("prefer_gpu", True)),
+            "seed": config.get("local_seed"),
+            "rope_scaling": config.get("local_rope_scale"),
+        }
+        
+        # Check if we need to reload
+        needs_reload = (
+            self.llm is None or
+            self.model_path != model_path or
+            self.loaded_params != current_params
+        )
+        
+        if needs_reload:
+            if self._loading:
+                raise RuntimeError("Malli on jo ladattavana. Odota hetki.")
+            
+            self._loading = True
+            try:
+                self._load_model(model_path, current_params, safe_log_fn)
+            finally:
+                self._loading = False
+        
+        return self.llm
+    
+    def _load_model(self, model_path: str, params: Dict[str, Any], safe_log_fn):
+        """Load the model with the given parameters."""
+        try:
+            from llama_cpp import Llama
+        except Exception as exc:
+            raise RuntimeError(_format_llama_import_error(exc)) from exc
+        
+        safe_log_fn(f"Loading local model: {os.path.basename(model_path)}")
+        
+        # Determine GPU layers
+        n_gpu_layers = params["n_gpu_layers"]
+        prefer_gpu = params["prefer_gpu"]
+        
+        if not prefer_gpu:
+            # Force CPU mode
+            safe_log_fn("GPU disabled by prefer_gpu=False, using CPU only")
+            n_gpu_layers = 0
+        elif n_gpu_layers == -1:
+            # Auto: try GPU, fallback to CPU
+            n_gpu_layers = -1  # Let llama-cpp-python auto-detect
+        
+        # Build Llama kwargs
+        llama_kwargs = {
+            "model_path": model_path,
+            "n_ctx": params["n_ctx"],
+            "n_batch": params["n_batch"],
+            "verbose": False,
+        }
+        
+        # Handle threads (0 or None = auto)
+        n_threads = params["n_threads"]
+        if n_threads and n_threads > 0:
+            llama_kwargs["n_threads"] = n_threads
+        
+        # Add GPU layers
+        if n_gpu_layers != 0:
+            llama_kwargs["n_gpu_layers"] = n_gpu_layers
+        
+        # Add seed if specified
+        if params["seed"] is not None:
+            llama_kwargs["seed"] = int(params["seed"])
+        
+        # Add rope scaling if specified
+        if params["rope_scaling"] is not None:
+            llama_kwargs["rope_freq_scale"] = float(params["rope_scaling"])
+        
+        # Try loading with GPU
+        gpu_attempted = n_gpu_layers != 0 and prefer_gpu
+        
+        try:
+            self.llm = Llama(**llama_kwargs)
+            self.model_path = model_path
+            self.loaded_params = params.copy()
+            
+            if gpu_attempted:
+                safe_log_fn(
+                    f"Local model loaded successfully with GPU support "
+                    f"(n_ctx={params['n_ctx']}, n_gpu_layers={n_gpu_layers})"
+                )
+            else:
+                safe_log_fn(
+                    f"Local model loaded successfully in CPU mode "
+                    f"(n_ctx={params['n_ctx']})"
+                )
+        except Exception as exc:
+            if gpu_attempted:
+                # GPU failed, try CPU fallback
+                safe_log_fn(
+                    f"GPU initialization failed: {exc}. Falling back to CPU mode..."
+                )
+                
+                # Remove GPU layers and try again
+                llama_kwargs_cpu = llama_kwargs.copy()
+                llama_kwargs_cpu.pop("n_gpu_layers", None)
+                
+                try:
+                    self.llm = Llama(**llama_kwargs_cpu)
+                    self.model_path = model_path
+                    # Update loaded params to reflect CPU mode
+                    params_cpu = params.copy()
+                    params_cpu["n_gpu_layers"] = 0
+                    self.loaded_params = params_cpu
+                    safe_log_fn(
+                        f"Local model loaded successfully in CPU fallback mode "
+                        f"(n_ctx={params['n_ctx']})"
+                    )
+                    
+                    # Show user-friendly messagebox about GPU failure
+                    messagebox.showwarning(
+                        "GPU-kiihdytys ei käytössä",
+                        f"GPU-kiihdytyksen käynnistys epäonnistui:\n{exc}\n\n"
+                        "Malli on ladattu CPU-tilassa. Jos haluat käyttää GPU:ta, "
+                        "varmista että sinulla on CUDA-tuella varustettu llama-cpp-python-versio.\n\n"
+                        "Asennus: pip install llama-cpp-python --prefer-binary\n"
+                        "tai CUDA-tuki: pip install llama-cpp-python --extra-index-url "
+                        "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121"
+                    )
+                except Exception as cpu_exc:
+                    # Even CPU failed
+                    raise RuntimeError(
+                        f"Mallin lataus epäonnistui sekä GPU- että CPU-tilassa.\n\n"
+                        f"GPU-virhe: {exc}\n"
+                        f"CPU-virhe: {cpu_exc}\n\n"
+                        "Tarkista että llama-cpp-python on asennettu oikein."
+                    ) from cpu_exc
+            else:
+                # CPU mode failed directly
+                raise RuntimeError(
+                    f"Mallin lataus epäonnistui: {exc}\n\n"
+                    "Tarkista että llama-cpp-python on asennettu oikein ja "
+                    "mallin polku on oikea."
+                ) from exc
+    
+    def unload(self):
+        """Unload the current model."""
+        self.llm = None
+        self.model_path = None
+        self.loaded_params = {}
+
+
+# Global model manager instance
+_local_model_manager = LocalModelManager()
+
+
 class JugiAIApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -358,8 +548,6 @@ class JugiAIApp(tk.Tk):
         self._wm_scaled_img = None
         self._wm_overlay: tk.Label | None = None
         self.watermark_enabled = True  # Flag to track if watermark loading is available
-        self.llm = None
-        self.llm_model_path = None
         
         # Logo for messages
         self._msg_logo_img = None
@@ -1716,6 +1904,61 @@ class JugiAIApp(tk.Tk):
             role = msg.get("role", "user")
             messages.append({"role": role, "content": self._compose_message_for_backend(msg)})
         return messages
+    
+    def _build_messages_for_backend_with_context_limit(self) -> List[Dict[str, Any]]:
+        """
+        Build messages for backend with context window management.
+        Trims oldest messages if they would exceed local_n_ctx.
+        """
+        cfg = self.config_dict
+        backend = cfg.get("backend", "openai")
+        
+        # Only apply context limiting for local backend
+        if backend != "local":
+            return self._build_messages_for_backend()
+        
+        n_ctx = int(cfg.get("local_n_ctx", 4096))
+        
+        # Build full messages first
+        messages = self._build_messages_for_backend()
+        
+        # Rough token estimation: 4 chars per token on average
+        # This is a heuristic; proper tokenization would be better but requires the model's tokenizer
+        def estimate_tokens(msgs: List[Dict[str, Any]]) -> int:
+            total_chars = sum(len(str(m.get("content", ""))) for m in msgs)
+            return total_chars // 4
+        
+        # If we're within limits, return as-is
+        if estimate_tokens(messages) <= n_ctx * 0.8:  # Use 80% of context as safety margin
+            return messages
+        
+        # Need to trim - keep system prompt and most recent messages
+        sys_prompt_msgs = [m for m in messages if m.get("role") == "system"]
+        other_msgs = [m for m in messages if m.get("role") != "system"]
+        
+        # Start with system prompt
+        result = sys_prompt_msgs.copy()
+        
+        # Add messages from newest to oldest until we approach the limit
+        target_tokens = int(n_ctx * 0.8)
+        for msg in reversed(other_msgs):
+            result_with_msg = sys_prompt_msgs + [msg] + result[len(sys_prompt_msgs):]
+            if estimate_tokens(result_with_msg) > target_tokens:
+                break
+            result = result_with_msg
+        
+        # Ensure we have at least the last user message
+        if len(result) <= len(sys_prompt_msgs) and other_msgs:
+            result = sys_prompt_msgs + [other_msgs[-1]]
+        
+        trimmed_count = len(messages) - len(result)
+        if trimmed_count > 0:
+            self._safe_log(
+                f"Trimmed {trimmed_count} oldest message(s) to fit context window "
+                f"(n_ctx={n_ctx})"
+            )
+        
+        return result
 
     def _compose_message_for_backend(self, message: Dict[str, Any]) -> str:
         text = (message.get("content") or "").strip()
@@ -1812,13 +2055,9 @@ class JugiAIApp(tk.Tk):
 
     def _call_local_llm(self) -> str:
         cfg = self.config_dict
-        model_path = (cfg.get("local_model_path") or "").strip()
         
-        # Validate model path exists
-        if not model_path:
-            raise RuntimeError(
-                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse malli."
-            )
+        # Get or load the model using the model manager
+        llm = _local_model_manager.get_model(cfg, self._safe_log)
         
         if not os.path.exists(model_path):
             raise RuntimeError(
@@ -1846,9 +2085,24 @@ class JugiAIApp(tk.Tk):
             except (ValueError, TypeError):
                 requested_threads = 0  # Default to auto
             validated_threads = self._validate_thread_count(requested_threads)
+            
+            # Determine GPU layers based on use_gpu setting
+            use_gpu = cfg.get("use_gpu", "cpu")
+            if use_gpu == "cpu":
+                n_gpu_layers = 0
+            elif use_gpu == "gpu":
+                n_gpu_layers = -1  # All layers to GPU
+            else:  # "both"
+                try:
+                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
+                except (ValueError, TypeError):
+                    n_gpu_layers = 0
+            
+            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
             self.llm = Llama(
                 model_path=model_path,
                 n_threads=validated_threads,
+                n_gpu_layers=n_gpu_layers,
                 verbose=False,
             )
             self.llm_model_path = model_path
@@ -1861,11 +2115,18 @@ class JugiAIApp(tk.Tk):
             "temperature": float(cfg.get("temperature", 0.7)),
             "top_p": float(cfg.get("top_p", 1.0)),
         }
-        mt = cfg.get("max_tokens")
-        if isinstance(mt, int) and mt > 0:
-            params["max_tokens"] = mt
+        
+        # Use local_max_tokens if specified, otherwise use max_tokens
+        local_mt = cfg.get("local_max_tokens")
+        if local_mt is not None and isinstance(local_mt, int) and local_mt > 0:
+            params["max_tokens"] = local_mt
+        else:
+            mt = cfg.get("max_tokens")
+            if isinstance(mt, int) and mt > 0:
+                params["max_tokens"] = mt
+        
         try:
-            out = self.llm.create_chat_completion(**params)
+            out = llm.create_chat_completion(**params)
             content = out["choices"][0]["message"]["content"]
         except Exception:
             # Fallback yksinkertaiseen prompttiin
@@ -1878,11 +2139,16 @@ class JugiAIApp(tk.Tk):
                 ]
             )
             prompt = (sys_prompt + "\n\n" + user_texts).strip()
-            out = self.llm(
+            
+            max_tokens_fallback = params.get("max_tokens", 256)
+            if not isinstance(max_tokens_fallback, int) or max_tokens_fallback <= 0:
+                max_tokens_fallback = 256
+            
+            out = llm(
                 prompt=prompt,
                 temperature=float(cfg.get("temperature", 0.7)),
                 top_p=float(cfg.get("top_p", 1.0)),
-                max_tokens=mt if isinstance(mt, int) and mt > 0 else 256,
+                max_tokens=max_tokens_fallback,
             )
             content = out.get("choices", [{}])[0].get("text", "")
         return content or ""
@@ -2305,7 +2571,7 @@ class JugiAIApp(tk.Tk):
         max_recommended = cpu_count * 4
         ttk.Label(l, text="Säikeet (0 = auto):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         lthr_var = tk.IntVar(value=int(self.config_dict.get("local_threads", 0)))
-        ttk.Entry(l, textvariable=lthr_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Entry(l, textvariable=lthr_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
         ttk.Label(
             l, 
@@ -2313,6 +2579,35 @@ class JugiAIApp(tk.Tk):
             style="Subtle.TLabel"
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
+        
+        # GPU settings
+        ttk.Label(l, text="GPU-käyttö:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        use_gpu_var = tk.StringVar(value=self.config_dict.get("use_gpu", "cpu"))
+        gpu_frame = ttk.Frame(l)
+        gpu_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Radiobutton(gpu_frame, text="CPU", variable=use_gpu_var, value="cpu").pack(side=tk.LEFT)
+        ttk.Radiobutton(gpu_frame, text="GPU", variable=use_gpu_var, value="gpu").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Radiobutton(gpu_frame, text="Molemmat", variable=use_gpu_var, value="both").pack(side=tk.LEFT, padx=(12, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="CPU = vain prosessori, GPU = kaikki kerrokseet GPU:lle, Molemmat = osa GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
+        # GPU layers count (for "both" mode)
+        ttk.Label(l, text="GPU-kerrokset (Molemmat-tila):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        n_gpu_layers_var = tk.IntVar(value=int(self.config_dict.get("n_gpu_layers", 0)))
+        ttk.Entry(l, textvariable=n_gpu_layers_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="0 = ei GPU:ta, -1 = kaikki GPU:lle, >0 = määritetty kerrosmäärä GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
         for i in range(3):
             l.columnconfigure(i, weight=1)
 
@@ -2539,6 +2834,22 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["local_threads"] = thread_value
             except (ValueError, TypeError):
                 self.config_dict["local_threads"] = 0
+            
+            # Save GPU settings
+            use_gpu_value = use_gpu_var.get().strip()
+            if use_gpu_value not in ["cpu", "gpu", "both"]:
+                use_gpu_value = "cpu"
+            self.config_dict["use_gpu"] = use_gpu_value
+            
+            try:
+                n_gpu_layers_value = int(n_gpu_layers_var.get())
+                # Validate: -1 for all layers, 0 for CPU only, or positive for specific count
+                # Other negative values are not valid, default to 0
+                if n_gpu_layers_value < -1:
+                    n_gpu_layers_value = 0
+                self.config_dict["n_gpu_layers"] = n_gpu_layers_value
+            except (ValueError, TypeError):
+                self.config_dict["n_gpu_layers"] = 0
             
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
