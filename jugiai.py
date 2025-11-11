@@ -251,13 +251,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Paikallinen malli
     "local_model_path": "",
     "local_threads": 0,  # 0 = auto
-    "local_n_ctx": 4096,  # Context window size
-    "local_n_batch": 256,  # Batch size for prompt processing
-    "local_gpu_layers": -1,  # -1 = auto if GPU build, 0 = CPU only, >0 = number of layers
-    "local_max_tokens": None,  # Max tokens per completion (None = let llama decide)
-    "local_seed": None,  # Random seed (None = random)
-    "local_rope_scale": None,  # RoPE scaling for extended context (None = default)
-    "prefer_gpu": True,  # High-level flag: when False, force CPU even if GPU build exists
+    "use_gpu": "cpu",  # "cpu", "gpu", or "both"
+    "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
@@ -2064,8 +2059,56 @@ class JugiAIApp(tk.Tk):
         # Get or load the model using the model manager
         llm = _local_model_manager.get_model(cfg, self._safe_log)
         
-        # Build messages with context trimming
-        messages = self._build_messages_for_backend_with_context_limit()
+        if not os.path.exists(model_path):
+            raise RuntimeError(
+                f"Paikallista mallia ei löydy: {model_path}\n"
+                "Tarkista polku asetuksista tai lataa malli uudelleen."
+            )
+        
+        # Validate it's a file, not a directory
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Virheellinen mallitiedosto: {model_path}\n"
+                "Polku on hakemisto, ei tiedosto."
+            )
+        
+        try:
+            from llama_cpp import Llama
+        except Exception as exc:
+            raise RuntimeError(_format_llama_import_error(exc)) from exc
+
+        if self.llm is None or self.llm_model_path != model_path:
+            self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
+            # Validate and get thread count
+            try:
+                requested_threads = int(cfg.get("local_threads", 0))
+            except (ValueError, TypeError):
+                requested_threads = 0  # Default to auto
+            validated_threads = self._validate_thread_count(requested_threads)
+            
+            # Determine GPU layers based on use_gpu setting
+            use_gpu = cfg.get("use_gpu", "cpu")
+            if use_gpu == "cpu":
+                n_gpu_layers = 0
+            elif use_gpu == "gpu":
+                n_gpu_layers = -1  # All layers to GPU
+            else:  # "both"
+                try:
+                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
+                except (ValueError, TypeError):
+                    n_gpu_layers = 0
+            
+            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
+            self.llm = Llama(
+                model_path=model_path,
+                n_threads=validated_threads,
+                n_gpu_layers=n_gpu_layers,
+                verbose=False,
+            )
+            self.llm_model_path = model_path
+            self._safe_log("Local model loaded successfully.")
+
+        messages = self._build_messages_for_backend()
 
         params = {
             "messages": messages,
@@ -2537,97 +2580,32 @@ class JugiAIApp(tk.Tk):
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
         
-        # Context window size
-        ttk.Label(l, text="Kontekstin koko (n_ctx):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        lctx_var = tk.IntVar(value=int(self.config_dict.get("local_n_ctx", 4096)))
-        ttk.Entry(l, textvariable=lctx_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        # GPU settings
+        ttk.Label(l, text="GPU-käyttö:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        use_gpu_var = tk.StringVar(value=self.config_dict.get("use_gpu", "cpu"))
+        gpu_frame = ttk.Frame(l)
+        gpu_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Radiobutton(gpu_frame, text="CPU", variable=use_gpu_var, value="cpu").pack(side=tk.LEFT)
+        ttk.Radiobutton(gpu_frame, text="GPU", variable=use_gpu_var, value="gpu").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Radiobutton(gpu_frame, text="Molemmat", variable=use_gpu_var, value="both").pack(side=tk.LEFT, padx=(12, 0))
         row += 1
         ttk.Label(
-            l, 
-            text="Mallin konteksti-ikkuna (tokeneita). Suositus: 2048-8192.",
+            l,
+            text="CPU = vain prosessori, GPU = kaikki kerrokseet GPU:lle, Molemmat = osa GPU:lle",
             style="Subtle.TLabel"
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
         
-        # Batch size
-        ttk.Label(l, text="Eräkoko (n_batch):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        lbatch_var = tk.IntVar(value=int(self.config_dict.get("local_n_batch", 256)))
-        ttk.Entry(l, textvariable=lbatch_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        # GPU layers count (for "both" mode)
+        ttk.Label(l, text="GPU-kerrokset (Molemmat-tila):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        n_gpu_layers_var = tk.IntVar(value=int(self.config_dict.get("n_gpu_layers", 0)))
+        ttk.Entry(l, textvariable=n_gpu_layers_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
         ttk.Label(
-            l, 
-            text="Promptin käsittelyn eräkoko. Suositus: 128-512.",
+            l,
+            text="0 = ei GPU:ta, -1 = kaikki GPU:lle, >0 = määritetty kerrosmäärä GPU:lle",
             style="Subtle.TLabel"
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
-        row += 1
-        
-        # GPU layers
-        ttk.Label(l, text="GPU-tasot (n_gpu_layers):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        lgpu_var = tk.IntVar(value=int(self.config_dict.get("local_gpu_layers", -1)))
-        ttk.Entry(l, textvariable=lgpu_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
-        row += 1
-        ttk.Label(
-            l, 
-            text="-1 = auto (GPU jos saatavilla), 0 = CPU-tila, >0 = tasoja GPU:lle",
-            style="Subtle.TLabel"
-        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
-        row += 1
-        
-        # Prefer GPU checkbox
-        prefer_gpu_var = tk.BooleanVar(value=bool(self.config_dict.get("prefer_gpu", True)))
-        ttk.Checkbutton(l, text="Käytä GPU-kiihdytystä (jos saatavilla)", variable=prefer_gpu_var).grid(
-            row=row, column=0, columnspan=3, sticky=tk.W, pady=(8, 0)
-        )
-        row += 1
-        
-        # Max tokens for local
-        ttk.Label(l, text="Max tokeneja (tyhjä = oletus):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        lmax_var = tk.StringVar(
-            value=str(self.config_dict.get("local_max_tokens")) if self.config_dict.get("local_max_tokens") else ""
-        )
-        ttk.Entry(l, textvariable=lmax_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
-        row += 1
-        ttk.Label(
-            l, 
-            text="Vastauksen maksimipituus paikalliselle mallille.",
-            style="Subtle.TLabel"
-        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
-        row += 1
-        
-        # Seed
-        ttk.Label(l, text="Siemen (seed, tyhjä = satunnainen):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        lseed_var = tk.StringVar(
-            value=str(self.config_dict.get("local_seed")) if self.config_dict.get("local_seed") is not None else ""
-        )
-        ttk.Entry(l, textvariable=lseed_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
-        row += 1
-        ttk.Label(
-            l, 
-            text="Satunnaislukugeneraattorin siemen toistettavuutta varten.",
-            style="Subtle.TLabel"
-        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
-        row += 1
-        
-        # Model status indicator
-        ttk.Label(l, text="Mallin tila:", style="SectionTitle.TLabel").grid(
-            row=row, column=0, columnspan=3, sticky=tk.W, pady=(16, 8)
-        )
-        row += 1
-        
-        model_status_var = tk.StringVar()
-        if _local_model_manager.llm is not None and _local_model_manager.model_path:
-            model_name = os.path.basename(_local_model_manager.model_path)
-            params = _local_model_manager.loaded_params
-            n_ctx_loaded = params.get("n_ctx", "?")
-            n_gpu = params.get("n_gpu_layers", 0)
-            gpu_status = f"GPU ({n_gpu} tasoa)" if n_gpu > 0 else "CPU"
-            model_status_var.set(f"✓ Ladattu: {model_name} (n_ctx={n_ctx_loaded}, {gpu_status})")
-        else:
-            model_status_var.set("○ Ei mallia ladattu")
-        
-        ttk.Label(l, textvariable=model_status_var, style="Subtle.TLabel").grid(
-            row=row, column=0, columnspan=3, sticky=tk.W
-        )
         row += 1
         
         for i in range(3):
@@ -2857,35 +2835,21 @@ class JugiAIApp(tk.Tk):
             except (ValueError, TypeError):
                 self.config_dict["local_threads"] = 0
             
-            # Save new local model parameters
-            try:
-                self.config_dict["local_n_ctx"] = max(512, int(lctx_var.get()))
-            except (ValueError, TypeError):
-                self.config_dict["local_n_ctx"] = 4096
+            # Save GPU settings
+            use_gpu_value = use_gpu_var.get().strip()
+            if use_gpu_value not in ["cpu", "gpu", "both"]:
+                use_gpu_value = "cpu"
+            self.config_dict["use_gpu"] = use_gpu_value
             
             try:
-                self.config_dict["local_n_batch"] = max(8, int(lbatch_var.get()))
+                n_gpu_layers_value = int(n_gpu_layers_var.get())
+                # Validate: -1 for all layers, 0 for CPU only, or positive for specific count
+                # Other negative values are not valid, default to 0
+                if n_gpu_layers_value < -1:
+                    n_gpu_layers_value = 0
+                self.config_dict["n_gpu_layers"] = n_gpu_layers_value
             except (ValueError, TypeError):
-                self.config_dict["local_n_batch"] = 256
-            
-            try:
-                self.config_dict["local_gpu_layers"] = int(lgpu_var.get())
-            except (ValueError, TypeError):
-                self.config_dict["local_gpu_layers"] = -1
-            
-            self.config_dict["prefer_gpu"] = bool(prefer_gpu_var.get())
-            
-            lmax_str = lmax_var.get().strip()
-            if lmax_str and lmax_str.isdigit():
-                self.config_dict["local_max_tokens"] = int(lmax_str)
-            else:
-                self.config_dict["local_max_tokens"] = None
-            
-            lseed_str = lseed_var.get().strip()
-            if lseed_str and lseed_str.lstrip('-').isdigit():
-                self.config_dict["local_seed"] = int(lseed_str)
-            else:
-                self.config_dict["local_seed"] = None
+                self.config_dict["n_gpu_layers"] = 0
             
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
