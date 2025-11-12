@@ -2,199 +2,276 @@
 
 ## Project Overview
 
-AnomAI/JugiAI is a Windows-focused AI chat application built with Python and Tkinter. It supports both OpenAI API and local LLM models (GGUF format via llama-cpp-python). The project emphasizes zero-friction Windows deployment with PyInstaller executables.
+AnomAI/JugiAI is a Windows-native AI chat application built with Python and Tkinter. It provides a GUI interface for interacting with OpenAI APIs and local LLM models (via llama-cpp-python).
 
-## Language and Documentation
+**Key Features:**
+- Tkinter-based GUI with modern cyber-neon theme
+- Support for OpenAI API and local GGUF models
+- Conversation history with playback features
+- Profile management and customizable settings
+- PyInstaller-based Windows executable generation
+- UTF-8 safe installation scripts for Windows
 
-- **Primary Language**: Finnish (documentation, UI, comments)
-- **Code**: Python with English variable/function names where standard
-- All README and documentation should be in Finnish
-- UI strings and messages should be in Finnish
+## Project Structure
 
-## Build and Test Process
+```
+AnomAI/
+├── jugiai.py                    # Main application (Tkinter GUI)
+├── playback_utils.py            # Playback and font utilities
+├── install.bat                  # Main installation script
+├── install_utf8.bat             # UTF-8 wrapper for install.bat
+├── build_exe.bat                # PyInstaller build script
+├── start_jugiai.bat             # Application launcher
+├── make_ico.py                  # Icon generation utility
+├── requirements.txt             # Python dependencies
+├── config.json                  # User configuration (auto-generated)
+├── history.json                 # Chat history (auto-generated)
+├── tests/                       # Unit tests
+│   ├── test_offline_mode.py
+│   ├── test_playback_utils.py
+│   ├── test_model_formatting.py
+│   └── ...
+├── scripts/                     # Helper scripts
+└── .github/
+    └── workflows/               # CI/CD workflows
+        ├── build-windows.yml
+        ├── lint.yml
+        └── windows-pyinstaller.yml
+```
 
-### Running Tests
+## Technology Stack
 
+- **Language:** Python 3.10+ (64-bit required for PyInstaller)
+- **GUI Framework:** Tkinter (standard library)
+- **HTTP Client:** urllib (standard library)
+- **Optional Dependencies:**
+  - Pillow (>=8.0.0) - Image processing
+  - llama-cpp-python - Local LLM support (installed separately)
+- **Build Tool:** PyInstaller (for .exe generation)
+- **Testing:** unittest (standard library)
+
+## Development Guidelines
+
+### Code Style
+
+1. **Encoding:** All Python files use UTF-8 with BOM-free encoding
+2. **Batch Scripts:** Windows batch files (.bat, .cmd) must be:
+   - UTF-8 encoded without BOM
+   - Use CRLF line endings (required for Windows)
+   - Validated by lint.yml workflow
+3. **Documentation:** Finnish language for user-facing docs, English for code comments
+4. **Type Hints:** Use modern Python type hints (from `__future__ import annotations`)
+
+### Coding Patterns
+
+1. **Configuration Management:**
+   - Use JSON for config files (config.json, history.json)
+   - Always write with UTF-8 encoding: `json.dump(..., ensure_ascii=False)`
+   - Provide sensible defaults for missing settings
+
+2. **Error Handling:**
+   - Graceful degradation for missing optional dependencies (PIL, llama-cpp-python)
+   - User-friendly error messages in Finnish
+   - Log errors to jugiai_error.log with full tracebacks
+
+3. **Threading:**
+   - Use threading for API calls to prevent GUI freezing
+   - Validate thread counts against CPU limits
+   - See `test_thread_validation.py` for patterns
+
+4. **Offline Mode:**
+   - Detect offline mode via: explicit flag, local backend, or missing API key
+   - Prevent API calls when offline
+   - See `test_offline_mode.py` for implementation
+
+### Testing
+
+**Run Tests:**
 ```bash
-# Run all tests (uses Python's unittest framework)
 python -m unittest discover -s tests -v
-
-# Run specific test file
-python -m unittest tests.test_playback_utils
-
-# Run tests with coverage (if coverage is installed)
-python -m coverage run -m unittest discover -s tests
-python -m coverage report
 ```
 
-**Expected**: 39+ tests should pass. One test (`test_error_messages`) may fail in headless environments due to missing tkinter - this is acceptable in CI.
+**Test Organization:**
+- Unit tests in `tests/` directory
+- One test file per feature/module
+- Use descriptive test names and docstrings
+- Mock external dependencies (API calls, file I/O)
 
-### Linting
+**CI/CD:**
+- All tests run on push/PR via GitHub Actions
+- Windows-specific testing environment
+- Lint checks for encoding and line endings
 
-The project uses GitHub Actions for linting:
-- Windows batch script encoding validation (UTF-8 without BOM, CRLF line endings)
-- See `.github/workflows/lint.yml` for details
+### Building
 
-### Building the Application
-
+**Development Build:**
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+python jugiai.py
+```
 
-# Build executable (Windows only)
+**Production Build:**
+```bash
 build_exe.bat
-
-# The executable will be created at: dist/AnomAI/AnomAI.exe
 ```
+This creates:
+- `dist\AnomAI\AnomAI.exe` - Standalone executable
+- `AnomAI_Windows.zip` - Distribution package
+- `build_exe.log` - Build log
 
-## Coding Standards
-
-### Python Code
-
-1. **Python Version**: Requires Python 3.10+ (64-bit)
-2. **Standard Library First**: Minimize external dependencies
-3. **Type Hints**: Use type hints from `typing` module
-4. **Encoding**: All Python files use UTF-8 with `# -*- coding: utf-8 -*-`
-5. **Error Handling**: Comprehensive try-except blocks with user-friendly Finnish messages
-6. **Threading**: UI updates must be thread-safe (use `after()` for GUI updates from threads)
-
-### Windows Batch Scripts
-
-1. **Encoding**: UTF-8 **without BOM**
-2. **Line Endings**: CRLF (Windows style) - enforced by lint workflow
-3. **Robustness**: Continue on errors where possible, provide clear error messages
-4. **JSON Logging**: Use JSON format for structured logging where applicable
-
-### File Naming Conventions
-
-- Python modules: lowercase with underscores (e.g., `playback_utils.py`)
-- Batch scripts: lowercase with underscores (e.g., `install.bat`, `build_exe.bat`)
-- Tests: `test_*.py` in the `tests/` directory
-
-## Testing Requirements
-
-### When to Add Tests
-
-- **Always** add tests for new utility functions in separate modules (like `playback_utils.py`)
-- **Always** add tests for validation logic (offline mode, input validation)
-- **Optional** for GUI-specific code (Tkinter widgets) - visual testing preferred
-- **Required** for data processing, business logic, and configuration handling
-
-### Test Structure
-
-- Use Python's `unittest` framework
-- Test files should be named `test_<feature>.py`
-- Each test class should test one logical component
-- Include docstrings explaining what each test validates
-
-### Example Test Pattern
-
-```python
-import unittest
-
-class MyFeatureTests(unittest.TestCase):
-    """Test suite for my feature."""
-    
-    def test_basic_functionality(self):
-        """Test that basic feature works as expected."""
-        result = my_function(input_value)
-        self.assertEqual(result, expected_value)
-    
-    def test_edge_case(self):
-        """Test edge case handling."""
-        result = my_function(None)
-        self.assertIsNone(result)
+**Installation:**
+```bash
+install.bat
 ```
+Performs full setup:
+1. Creates virtual environment (.venv)
+2. Installs dependencies
+3. Configures application
+4. Builds executable
+5. Creates desktop shortcut
 
-## Project-Specific Guidance
+### Important Constraints
 
-### Configuration Management
+1. **Windows Focus:** This is a Windows-native application
+   - Use Windows path conventions (backslash)
+   - Test on Windows environment
+   - Batch scripts must use CRLF line endings
 
-- **Config File**: `config.json` - stores user settings, API keys, profiles
-- **History File**: `history.json` - stores chat conversation history
-- **Encoding**: Always use UTF-8 for JSON files (Python handles this by default)
-- **Defaults**: Provide sensible defaults for all configuration values
+2. **Minimal Dependencies:** Prefer standard library
+   - Core features work without external packages
+   - Optional features gracefully degrade
 
-### Offline Mode Support
+3. **UTF-8 Safety:** Windows console encoding is fragile
+   - Use UTF-8 without BOM for all text files
+   - Batch scripts handle codepage switching
+   - JSON files use `ensure_ascii=False`
 
-The application supports full offline operation with local models:
-- Check `offline_mode` flag in config
-- Validate local model paths before use
-- Provide clear error messages when llama-cpp-python is missing
-- See `tests/test_offline_mode.py` for offline mode requirements
-
-### Windows-Specific Considerations
-
-1. **Windows Store Python**: Detect and redirect Windows Store Python stub (see `_guard_windows_store_stub()`)
-2. **Path Handling**: Use `os.path.join()` for cross-compatibility
-3. **Executable Detection**: Support multiple Python launchers (`py -3`, `python`, `python3`)
-4. **PyInstaller**: Code must be compatible with frozen executables
-
-### UI/UX Guidelines
-
-- **Theme**: Cyber-neon dark theme with turquoise accents (#00f0ff, #0080ff)
-- **Fonts**: Configurable with zoom controls (MIN: 8, MAX: 24)
-- **Accessibility**: Support font size adjustments via zoom buttons
-- **Error Messages**: Always in Finnish, user-friendly, actionable
-- **Loading States**: Show progress for long-running operations
-
-### External Dependencies
-
-**Core (Required)**:
-- `pillow>=8.0.0` - Image handling (watermarks, backgrounds, icons)
-
-**Optional**:
-- `llama-cpp-python` - Local LLM support (installed separately by `install.bat`)
-
-**Important**: Do NOT add `llama-cpp-python` to `requirements.txt` as it requires special installation flags and C++ build tools on Windows.
-
-## Security and Privacy
-
-1. **API Keys**: Never commit API keys or secrets to the repository
-2. **Local-First**: Support offline mode for full privacy
-3. **Data Storage**: Chat history is stored locally in `history.json`
-4. **No Telemetry**: No data collection or external tracking
+4. **PyInstaller Compatibility:**
+   - Avoid dynamic imports when possible
+   - Bundle data files explicitly in .spec
+   - Test .exe builds before release
 
 ## Common Tasks
 
 ### Adding a New Feature
 
-1. Implement the feature in appropriate module
-2. Add unit tests if the feature involves logic/validation
-3. Update Finnish documentation in README.MD
-4. Test in both Python script and PyInstaller executable modes
+1. Implement in `jugiai.py` or separate module
+2. Add unit tests in `tests/test_<feature>.py`
+3. Update README.MD if user-facing
+4. Test with both Python and .exe versions
 5. Ensure offline mode compatibility if applicable
 
 ### Fixing a Bug
 
-1. Add a test that reproduces the bug (if possible)
+1. Add failing test that reproduces the bug
 2. Fix the bug with minimal changes
-3. Verify all existing tests still pass
-4. Update documentation if behavior changes
+3. Verify test passes
+4. Check for regressions in related features
 
 ### Updating Dependencies
 
-1. Check if the dependency is truly necessary
-2. For Pillow: Ensure version supports Python 3.10+ (>=8.0.0)
-3. Do NOT add llama-cpp-python to requirements.txt
-4. Test in both development and PyInstaller build
+1. Update `requirements.txt`
+2. Test installation with `install.bat`
+3. Verify .exe build with `build_exe.bat`
+4. Update README.MD if needed
 
-## Files to Never Modify
+### Modifying Batch Scripts
 
-- `logo.png` - AnomFIN branding asset
-- `demo_final.png`, `screenshot_*.png` - Documentation assets
-- `.git/` - Git internals
+1. Use UTF-8 encoding without BOM
+2. Ensure CRLF line endings
+3. Test on Windows command prompt
+4. Verify lint checks pass
+5. Add error handling for user-friendly output
 
-## Files That Require Special Care
+## Security Considerations
 
-- `install.bat`, `install_utf8.bat` - Must maintain UTF-8 without BOM, CRLF line endings
-- `build_exe.bat` - PyInstaller build script, test thoroughly on Windows
-- `jugiai.py` - Main application file, large and complex, minimize changes
-- `config.json` - User configuration, preserve backward compatibility
+1. **API Keys:** Never commit API keys to version control
+   - Store in config.json (gitignored)
+   - Prompt user during installation
+   - Validate before use
 
-## Getting Help
+2. **User Input:** Sanitize file paths and user inputs
+   - Use os.path operations for path handling
+   - Validate model file paths before loading
 
-- Review existing tests in `tests/` directory for examples
-- Check README.MD for detailed Finnish documentation
-- Examine `playback_utils.py` for example of well-tested utility module
-- Look at `test_offline_mode.py` for validation pattern examples
+3. **Dependencies:** Keep dependencies minimal and updated
+   - Check for vulnerabilities before adding
+   - Use `--prefer-binary` for llama-cpp-python
+
+## Performance Tips
+
+1. **GUI Responsiveness:**
+   - Use threads for long-running operations
+   - Update GUI from main thread only
+   - Show loading indicators for API calls
+
+2. **Memory Management:**
+   - Clear history when it grows large
+   - Unload images when not needed
+   - Limit conversation context size
+
+3. **Build Optimization:**
+   - Use PyInstaller's `--onefile` for distribution
+   - Exclude unnecessary modules with `--exclude-module`
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"No module named 'tkinter'"**
+   - tkinter is not available in headless environments
+   - Tests that import jugiai.py will fail in CI without display
+   - Solution: Mock tkinter in tests or skip GUI tests
+
+2. **UTF-8 Encoding Errors**
+   - Ensure batch files are UTF-8 without BOM
+   - Use `chcp 65001` before running scripts
+   - install_utf8.bat handles this automatically
+
+3. **PyInstaller Build Failures**
+   - Check Python is 64-bit and version 3.10+
+   - Install Visual C++ Build Tools for llama-cpp-python
+   - Review build_exe.log for details
+
+4. **Offline Mode Not Working**
+   - Verify `offline_mode: true` in config.json
+   - Check local_model_path points to .gguf file
+   - Ensure llama-cpp-python is installed
+
+## Best Practices for Copilot
+
+1. **When suggesting code changes:**
+   - Preserve existing code style and patterns
+   - Maintain UTF-8 encoding without BOM
+   - Keep changes minimal and focused
+   - Add tests for new functionality
+
+2. **When working with batch files:**
+   - Always use CRLF line endings
+   - Follow existing error handling patterns
+   - Include informative error messages in Finnish
+
+3. **When adding features:**
+   - Check if similar functionality exists
+   - Ensure Windows compatibility
+   - Test both Python and .exe versions
+   - Update documentation
+
+4. **When fixing bugs:**
+   - Reproduce with a test first
+   - Verify fix doesn't break offline mode
+   - Check impact on PyInstaller build
+   - Test with different configurations
+
+## Resources
+
+- **Repository:** https://github.com/AnomFIN/AnomAI
+- **Documentation:** README.MD (Finnish)
+- **Issue Tracker:** GitHub Issues
+- **CI/CD:** GitHub Actions workflows in .github/workflows/
+
+## Notes
+
+- This project uses Finnish for user-facing content
+- Focus on Windows compatibility
+- Prioritize offline mode functionality
+- Maintain backward compatibility with existing configs

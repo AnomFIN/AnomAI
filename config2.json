@@ -11,6 +11,8 @@
   "offline_mode": false,
   "local_model_path": "",
   "local_threads": 0,
+  "use_gpu": "cpu",
+  "n_gpu_layers": 0,
   "show_background": true,
   "background_path": "",
   "background_subsample": 1,
