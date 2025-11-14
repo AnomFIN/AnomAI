@@ -16,15 +16,21 @@ Tämä asiakirja kokoaa yhteen kaikki vaiheet, joilla AnomAI/JugiAI puretaan, as
 
 ## 2. Ohjattu asennus (`install.bat`)
 
-Asennusohjelma käy läpi seuraavat vaiheet ja pitää ikkunan auki myös virhetilanteissa, jotta näet selkeät korjausohjeet:
+**Käynnistä asennus kaksoisklikkaamalla `install.bat`-tiedostoa.** Asennusohjelma huolehtii automaattisesti UTF-8-koodauksesta ja käy läpi seuraavat vaiheet:
 
-### UTF-8-käynnistin (`install_utf8.bat`)
+### Asennusarkkitehtuuri
 
-* **Turvallinen koodisivun vaihto.** `install_utf8.bat` tunnistaa konsolin nykyisen koodisivun, yrittää vaihtaa UTF-8:aan ja palauttaa alkuperäisen tilan, vaikka `install.bat` epäonnistuisi.
-* **Rakenteinen lokitus.** Kaikki ilmoitukset tulostuvat JSON-muodossa (`{"component":"install_utf8", ...}`), joten ne on helppo ohjata lokityökaluun tai liittää tukipyyntöön.
-* **Virhesieto.** Jos koodisivun vaihto tai `install.bat`-haku epäonnistuu, skripti raportoi tilanteen, pitää prosessin käynnissä ja antaa yksiselitteiset jatko-ohjeet.
+Asennus käyttää kolmikerroksista arkkitehtuuria, joka takaa toimivuuden kaikilla Windows-järjestelmillä:
 
-1. **Käynnistä asennus** kaksoisklikkaamalla `install.bat`. Konsolin koodisivu vaihtuu automaattisesti UTF-8-muotoon, joten ääkköset näkyvät oikein.
+* **`install.bat`** - Yksinkertainen käynnistäjä (voit kaksoisklikkaa tätä)
+* **`install_utf8.bat`** - Hoitaa UTF-8-koodauksen ja konsoliasetukset
+* **`install_main.bat`** - Varsinainen asennuslogiikka
+
+Tämä rakenne varmistaa, että asennus toimii riippumatta konsolin alkuperäisistä asetuksista. Kaikki virhetilanteet raportoidaan selkeästi suomeksi.
+
+### Asennusprosessi
+
+1. **Käynnistä asennus** kaksoisklikkaamalla `install.bat`. Ohjelma näyttää asennuksen yleiskuvan ja vaatimukset.
 2. **Pythonin tunnistus ja tarkistus.** Skripti etsii asennetun Pythonin (`py -3`, `python`, `python3`) ja varmistaa, että käytössä on vähintään 64-bittinen Python 3.10. Halutessasi voit syöttää oman polun.
 3. **Virtuaaliympäristö `.venv`.** Projektiin luodaan automaattisesti `.venv`-kansio. Jos luonti epäonnistuu, jatketaan suoraan järjestelmän Pythonilla, mutta suosittelemme käyttämään virtuaaliympäristöä.
 4. **Pip ja riippuvuudet.** Pip päivitetään ja `requirements.txt` asennetaan. Tämän jälkeen skripti kysyy, haluatko asentaa paikallisen LLM-tuen (`llama-cpp-python --prefer-binary`). Kaikki asennuskomennot jatkavat virhetilanteissa, jotta voit yrittää uudelleen tai ohittaa vaiheen hallitusti.
@@ -77,6 +83,11 @@ Aktivoinnin jälkeen `python` ja `pip` viittaavat automaattisesti oikeaan ympär
 
 | Ongelma | Syy | Ratkaisu |
 | --- | --- | --- |
+| Asennus ei käynnisty tai sulkeutuu heti | Python puuttuu tai ei ole PATH-muuttujassa | Asenna Python 3.10+ (64-bit) osoitteesta [python.org](https://www.python.org/downloads/windows/). Varmista asennuksen aikana, että valitset "Add python.exe to PATH". Sulje ja avaa komentokehote uudelleen, sitten aja `install.bat`. |
+| "Python cannot execute basic commands" -virhe | Python-asennus on vioittunut | Korjaa Python-asennus Windowsin Ohjauspaneelista (Lisää/Poista sovelluksia → Python → Korjaa) tai asenna Python uudelleen. |
+| pip-asennus epäonnistuu "SSL certificate" -virheen takia | Yritysverkon palomuurin tai proxyn asetukset | Tämä on yleinen ongelma yritysverkoissa. Pyydä IT-tuelta apua pip-proxyn konfigurointiin tai pyydä lisäämään pypi.org palomuurin sallittujen sivustojen listaan. |
+| pip-asennus epäonnistuu "No connection" -virheen takia | Ei internet-yhteyttä | Varmista internet-yhteys ja yritä uudelleen. Jos ongelma jatkuu, tarkista palomuurin asetukset. |
+| config.json luonti epäonnistuu | Virheellinen syöte (esim. lämpötila ei ole numero) | Asennus näyttää virheilmoituksen ja ehdottaa ratkaisuja. Voit luoda config.json-tiedoston manuaalisesti myöhemmin tai ajaa `install.bat` uudelleen. |
 | `llama-cpp-python` asennus epäonnistuu (CMake-virheet) | Windowsilta puuttuu rakennustyökalut tai sopiva pyörä | Asenna [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) ja yritä `install.bat`:in ehdottamaa komentoa uudelleen. Vaihtoehtoisesti hae valmis binääripyörä osoitteesta [abetlen/llama-cpp-python releases](https://github.com/abetlen/llama-cpp-python/releases). Etä-API toimii silti ilman paikallista mallia. |
 | `build_exe.bat` pysähtyy heti | Python ei ole 64-bittinen 3.10+ tai sitä ei löydy | Asenna [Python 3.10 64-bit](https://www.python.org/downloads/windows/) ja varmista, että `py -3` tai `python` osoittaa siihen. Tarkista lisätiedot `build_exe.log`-tiedostosta. |
 | Pikakuvaketta ei synny | Työpöydän polku ei ollut PowerShellin saatavilla | Luo pikakuvake manuaalisesti: hiiren oikea `AnomAI.exe` → **Lähetä** → **Työpöytä (luo pikakuvake)**. |
