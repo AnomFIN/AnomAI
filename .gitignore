@@ -1,5 +1,59 @@
+# Python
 __pycache__/
 *.pyc
-screenshot*.png
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv_build/
+
+# PyInstaller
+*.spec
+build_exe.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Application-specific
 config.json
 test_config.json
+history.json
+screenshot*.png
+jugiai_error.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Distribution files
+AnomAI_Windows.zip
+*.exe
+*.ico
+logo.ico
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
