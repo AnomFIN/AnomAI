@@ -11,20 +11,20 @@ class TestInstallBatSyntax(unittest.TestCase):
     """Test cases for install.bat syntax validation"""
 
     def setUp(self):
-        """Set up test by loading install.bat content"""
+        """Set up test by loading install_main.bat content"""
         self.install_bat_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), 
-            'install.bat'
+            'install_main.bat'
         )
         with open(self.install_bat_path, 'r', encoding='utf-8') as f:
             self.content = f.read()
         self.lines = self.content.split('\n')
 
     def test_file_exists(self):
-        """Test that install.bat exists"""
+        """Test that install_main.bat exists"""
         self.assertTrue(
             os.path.exists(self.install_bat_path),
-            "install.bat file should exist"
+            "install_main.bat file should exist"
         )
 
     def test_has_echo_off(self):

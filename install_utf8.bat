@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 set "COMPONENT=install_utf8"
 set "EXIT_CODE=0"
 set "SWITCHED_UTF8=0"
-set "INSTALL_SCRIPT=%~dp0install.bat"
+set "INSTALL_SCRIPT=%~dp0install_main.bat"
 set "ORIG_CP="
 
 call :capture_codepage
@@ -56,17 +56,17 @@ goto :eof
 
 :invoke_install
 if not exist "!INSTALL_SCRIPT!" (
-  call :log ERROR "Missing install.bat at !INSTALL_SCRIPT!."
+  call :log ERROR "Missing install_main.bat at !INSTALL_SCRIPT!."
   set "EXIT_CODE=1"
   goto :eof
 )
-call :log INFO "Delegating to install.bat with UTF-8 environment."
+call :log INFO "Delegating to install_main.bat with UTF-8 environment."
 call "!INSTALL_SCRIPT!"
 set "EXIT_CODE=!errorlevel!"
 if not "!EXIT_CODE!"=="0" (
-  call :log ERROR "install.bat exited with code !EXIT_CODE!."
+  call :log ERROR "install_main.bat exited with code !EXIT_CODE!."
 ) else (
-  call :log INFO "install.bat completed without errors."
+  call :log INFO "install_main.bat completed without errors."
 )
 goto :eof
 
