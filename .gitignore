@@ -37,6 +37,7 @@ desktop.ini
 # Application-specific
 config.json
 test_config.json
+config_error.txt
 history.json
 screenshot*.png
 jugiai_error.log

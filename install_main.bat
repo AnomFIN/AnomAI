@@ -5,7 +5,18 @@ echo ============================================
 echo    AnomAI/JugiAI Installation Script
 echo ============================================
 echo.
-echo This script will set up AnomAI on your system.
+echo This script will set up AnomAI on your system by:
+echo   1. Creating a Python virtual environment
+echo   2. Installing required Python packages
+echo   3. Configuring the application
+echo   4. Optionally building an executable (AnomAI.exe)
+echo   5. Optionally creating a desktop shortcut
+echo.
+echo Prerequisites:
+echo   - Internet connection (for downloading packages)
+echo   - Python 3.10+ (64-bit) must be installed
+echo.
+echo The installation may take 5-15 minutes depending on your connection.
 echo.
 
 REM Store the script directory
@@ -105,6 +116,23 @@ if not "%PY_BITS%"=="64" (
 
 echo [OK] Python version meets requirements (3.10+ 64-bit)
 
+REM Pre-flight check: Verify Python can execute commands and import required modules
+echo Verifying Python can execute commands...
+%PY_CMD% -c "import sys, json; print('OK')" >nul 2>&1
+if !errorlevel! neq 0 (
+  echo [ERROR] Python cannot execute basic commands or import required modules.
+  echo This might indicate a corrupted Python installation.
+  echo.
+  echo Please try:
+  echo 1. Repair Python installation from Windows Add/Remove Programs
+  echo 2. Reinstall Python from https://www.python.org/downloads/windows/
+  echo 3. Make sure to check "Add python.exe to PATH" during installation
+  call :maybe_pause
+  endlocal
+  exit /b 1
+)
+echo [OK] Python can execute commands successfully
+
 echo.
 echo ============================================
 echo    Step 1: Virtual Environment Setup
@@ -150,7 +178,16 @@ if !errorlevel! neq 0 (
   python -m pip install --upgrade pip setuptools wheel
   if !errorlevel! neq 0 (
     echo [ERROR] Failed to upgrade pip/setuptools/wheel.
-    echo This might be a network issue. Check your internet connection.
+    echo.
+    echo Common causes:
+    echo - No internet connection
+    echo - Firewall or proxy blocking pip
+    echo - SSL certificate issues (common on corporate networks)
+    echo.
+    echo You can try continuing the installation anyway, or:
+    echo - Check your internet connection
+    echo - Configure pip proxy if behind corporate firewall
+    echo - Add exception for pypi.org to your firewall/antivirus
     call :maybe_pause
     endlocal
     exit /b 1
@@ -169,8 +206,18 @@ if exist requirements.txt (
   echo This may take a few minutes...
   python -m pip install -r requirements.txt
   if !errorlevel! neq 0 (
-    echo [ERROR] pip install failed. See output above.
-    echo Check your internet connection and try again.
+    echo [ERROR] Failed to install requirements from requirements.txt
+    echo.
+    echo Common causes:
+    echo - No internet connection
+    echo - Firewall or proxy blocking pip
+    echo - Package version conflicts
+    echo - Missing build tools (for packages with native code)
+    echo.
+    echo You can try:
+    echo - Check your internet connection
+    echo - Run: python -m pip install -r requirements.txt --verbose
+    echo - Install packages one by one to identify the problematic one
     call :maybe_pause
     endlocal
     exit /b 1
@@ -265,13 +312,25 @@ if "!MAX_TOKENS!"=="" set "MAX_TOKENS=4000"
 
 REM Create config.json using Python for proper JSON encoding
 echo Creating config.json...
-python -c "import json; config = {'api_key': '''!API_KEY!''', 'model': '''!MODEL!''', 'temperature': float('''!TEMPERATURE!'''), 'max_tokens': int('''!MAX_TOKENS!'''), 'backend': 'openai' if '''!API_KEY!''' else 'local', 'offline_mode': False}; json.dump(config, open('config.json', 'w', encoding='utf-8'), indent=2)"
+python -c "import json; config = {'api_key': '''!API_KEY!''', 'model': '''!MODEL!''', 'temperature': float('''!TEMPERATURE!'''), 'max_tokens': int('''!MAX_TOKENS!'''), 'backend': 'openai' if '''!API_KEY!''' else 'local', 'offline_mode': False}; json.dump(config, open('config.json', 'w', encoding='utf-8'), indent=2)" 2>config_error.txt
 if !errorlevel! neq 0 (
   echo [ERROR] Failed to create config.json
+  echo.
+  echo Error details:
+  if exist config_error.txt type config_error.txt
+  echo.
+  echo This might be due to:
+  echo - Invalid temperature value (must be a number between 0.0 and 2.0)
+  echo - Invalid max_tokens value (must be a positive integer)
+  echo - Permission issues writing to the directory
+  echo.
+  echo You can manually create config.json after installation.
+  del /f /q config_error.txt >nul 2>&1
   call :maybe_pause
   endlocal
   exit /b 1
 )
+del /f /q config_error.txt >nul 2>&1
 echo [OK] Configuration saved to config.json
 
 :skip_config
