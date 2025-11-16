@@ -95,24 +95,28 @@ def check_python_version() -> bool:
     Returns:
         True if version is OK, False otherwise.
     """
-    version = sys.version_info
-    bits = 8 * 8 if sys.maxsize > 2**32 else 32
-    
-    print_info(f"Python versio: {version.major}.{version.minor}.{version.micro}")
-    print_info(f"Arkkitehtuuri: {bits}-bit")
-    
-    if version.major < 3 or (version.major == 3 and version.minor < 10):
-        print_error(f"Python 3.10+ vaaditaan, mutta löydettiin versio {version.major}.{version.minor}")
-        print_error("Lataa uudempi Python-versio: https://www.python.org/downloads/")
+    try:
+        version = sys.version_info
+        bits = 8 * 8 if sys.maxsize > 2**32 else 32
+        
+        print_info(f"Python versio: {version.major}.{version.minor}.{version.micro}")
+        print_info(f"Arkkitehtuuri: {bits}-bit")
+        
+        if version.major < 3 or (version.major == 3 and version.minor < 10):
+            print_error(f"Python 3.10+ vaaditaan, mutta löydettiin versio {version.major}.{version.minor}")
+            print_error("Lataa uudempi Python-versio: https://www.python.org/downloads/")
+            return False
+        
+        if bits != 64:
+            print_error(f"64-bittinen Python vaaditaan, mutta löydettiin {bits}-bittinen versio")
+            print_error("Lataa 64-bittinen Python: https://www.python.org/downloads/")
+            return False
+        
+        print_success("Python-versio täyttää vaatimukset")
+        return True
+    except Exception as e:
+        print_error(f"Python-version tarkistus epäonnistui: {e}")
         return False
-    
-    if bits != 64:
-        print_error(f"64-bittinen Python vaaditaan, mutta löydettiin {bits}-bittinen versio")
-        print_error("Lataa 64-bittinen Python: https://www.python.org/downloads/")
-        return False
-    
-    print_success("Python-versio täyttää vaatimukset")
-    return True
 
 
 def check_pip_available() -> bool:
@@ -127,23 +131,34 @@ def check_pip_available() -> bool:
             [sys.executable, "-m", "pip", "--version"],
             check=True,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=10
         )
         print_success("pip on saatavilla")
         return True
+    except subprocess.TimeoutExpired:
+        print_error("pip-tarkistus aikakatkaistiin")
+        return False
     except subprocess.CalledProcessError:
         print_error("pip ei ole saatavilla")
         print_error("Asenna pip komennolla: python -m ensurepip --upgrade")
         return False
+    except FileNotFoundError:
+        print_error("Python tai pip ei löytynyt")
+        return False
+    except Exception as e:
+        print_error(f"pip-tarkistus epäonnistui: {e}")
+        return False
 
 
-def run_pip_command(args: List[str], description: str) -> bool:
+def run_pip_command(args: List[str], description: str, timeout: int = 600) -> bool:
     """
-    Run a pip command safely.
+    Run a pip command safely with comprehensive error handling.
     
     Args:
         args: List of pip command arguments (without 'python -m pip')
         description: Description of what the command does
+        timeout: Command timeout in seconds (default 600 = 10 minutes)
     
     Returns:
         True if command succeeded, False otherwise.
@@ -157,7 +172,8 @@ def run_pip_command(args: List[str], description: str) -> bool:
             cmd,
             check=True,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=timeout
         )
         
         # Show output if verbose or if there were warnings
@@ -166,6 +182,11 @@ def run_pip_command(args: List[str], description: str) -> bool:
         
         print_success(f"{description} onnistui")
         return True
+        
+    except subprocess.TimeoutExpired:
+        print_error(f"{description} aikakatkaistiin ({timeout} sekuntia)")
+        print_info("Yritä uudelleen paremmalla internet-yhteydellä tai suurenna timeout-arvoa")
+        return False
         
     except subprocess.CalledProcessError as e:
         print_error(f"{description} epäonnistui")
@@ -180,11 +201,20 @@ def run_pip_command(args: List[str], description: str) -> bool:
             print(e.stderr)
         
         return False
+    
+    except FileNotFoundError:
+        print_error(f"{description} epäonnistui: Python tai pip ei löytynyt")
+        print_info("Tarkista että Python on asennettu ja PATH-muuttuja on asetettu oikein")
+        return False
+    
+    except Exception as e:
+        print_error(f"{description} epäonnistui odottamattoman virheen vuoksi: {e}")
+        return False
 
 
 def install_cpu_version() -> bool:
     """
-    Install CPU version of llama-cpp-python.
+    Install CPU version of llama-cpp-python with error recovery.
     
     Returns:
         True if installation succeeded, False otherwise.
@@ -195,15 +225,20 @@ def install_cpu_version() -> bool:
     print_info("Asennus käyttää esikäännettyjä binäärejä (--prefer-binary)")
     print()
     
-    return run_pip_command(
-        ["install", "--upgrade", "--prefer-binary", "llama-cpp-python"],
-        "llama-cpp-python (CPU) asennus"
-    )
+    try:
+        return run_pip_command(
+            ["install", "--upgrade", "--prefer-binary", "llama-cpp-python"],
+            "llama-cpp-python (CPU) asennus",
+            timeout=600
+        )
+    except Exception as e:
+        print_error(f"Asennus epäonnistui odottamattoman virheen vuoksi: {e}")
+        return False
 
 
 def install_gpu_version() -> bool:
     """
-    Install GPU version of llama-cpp-python with CUDA support.
+    Install GPU version of llama-cpp-python with CUDA support and error recovery.
     
     Returns:
         True if installation succeeded, False otherwise.
@@ -214,27 +249,32 @@ def install_gpu_version() -> bool:
     print_info("Tämä saattaa kestää useita minuutteja...")
     print()
     
-    # First, try to install/upgrade the GPU version
-    cuda_url = "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121"
-    
-    success = run_pip_command(
-        [
-            "install",
-            "llama-cpp-python",
-            "--force-reinstall",
-            "--no-cache-dir",
-            "--extra-index-url",
-            cuda_url
-        ],
-        "llama-cpp-python (CUDA) asennus"
-    )
-    
-    if success:
-        print()
-        print_success("GPU-versio asennettu")
-        print_info("Huom: GPU-kiihdytys toimii vain CUDA-yhteensopivilla NVIDIA-näytönohjaimilla")
-    
-    return success
+    try:
+        # First, try to install/upgrade the GPU version
+        cuda_url = "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121"
+        
+        success = run_pip_command(
+            [
+                "install",
+                "llama-cpp-python",
+                "--force-reinstall",
+                "--no-cache-dir",
+                "--extra-index-url",
+                cuda_url
+            ],
+            "llama-cpp-python (CUDA) asennus",
+            timeout=900  # GPU version may take longer
+        )
+        
+        if success:
+            print()
+            print_success("GPU-versio asennettu")
+            print_info("Huom: GPU-kiihdytys toimii vain CUDA-yhteensopivilla NVIDIA-näytönohjaimilla")
+        
+        return success
+    except Exception as e:
+        print_error(f"GPU-asennus epäonnistui odottamattoman virheen vuoksi: {e}")
+        return False
 
 
 def verify_installation() -> bool:
@@ -252,16 +292,29 @@ def verify_installation() -> bool:
             [sys.executable, "-c", "import llama_cpp; print(llama_cpp.__version__)"],
             check=True,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=30
         )
         
         version = result.stdout.strip()
         print_success(f"llama-cpp-python asennettu onnistuneesti (versio {version})")
         return True
         
+    except subprocess.TimeoutExpired:
+        print_error("Asennuksen tarkistus aikakatkaistiin")
+        return False
+        
     except subprocess.CalledProcessError:
         print_error("llama-cpp-python ei ole käytettävissä")
         print_error("Asennus saattoi epäonnistua tai moduulia ei voitu tuoda")
+        return False
+    
+    except FileNotFoundError:
+        print_error("Python ei löytynyt asennuksen tarkistuksessa")
+        return False
+    
+    except Exception as e:
+        print_error(f"Asennuksen tarkistus epäonnistui: {e}")
         return False
 
 
@@ -293,84 +346,104 @@ def show_usage_instructions(gpu_mode: bool) -> None:
 
 def main() -> int:
     """
-    Main function.
+    Main function with comprehensive error handling.
     
     Returns:
         Exit code (0 for success, non-zero for failure)
     """
-    parser = argparse.ArgumentParser(
-        description="Asenna llama-cpp-python JugiAI:lle (paikallinen mallikäyttö)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+    try:
+        parser = argparse.ArgumentParser(
+            description="Asenna llama-cpp-python JugiAI:lle (paikallinen mallikäyttö)",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
 Esimerkkejä:
   python install_tool_for_windows.py           # Asenna CPU-versio
   python install_tool_for_windows.py --gpu     # Asenna GPU-versio (CUDA)
 
 Lisätietoja:
   https://github.com/AnomFIN/AnomAI
-        """
-    )
-    
-    parser.add_argument(
-        "--gpu",
-        action="store_true",
-        help="Asenna GPU-versio CUDA-tuella (vaatii NVIDIA-näytönohjaimen)"
-    )
-    
-    parser.add_argument(
-        "--skip-verify",
-        action="store_true",
-        help="Ohita asennuksen tarkistus"
-    )
-    
-    args = parser.parse_args()
-    
-    # Print banner
-    print_header("JugiAI - Paikallisen mallin tuen asennus")
-    
-    # Check prerequisites
-    if not check_python_version():
-        return 1
-    
-    if not check_pip_available():
-        return 1
-    
-    print()
-    
-    # Install appropriate version
-    if args.gpu:
-        success = install_gpu_version()
-    else:
-        success = install_cpu_version()
-    
-    if not success:
-        print()
-        print_error("Asennus epäonnistui!")
-        print()
-        print_info("Yleisiä ratkaisuja:")
-        print_info("  1. Tarkista internet-yhteys")
-        print_info("  2. Asenna Visual C++ Build Tools:")
-        print_info("     https://visualstudio.microsoft.com/visual-cpp-build-tools/")
-        print_info("  3. Yritä uudelleen järjestelmänvalvojana")
-        print_info("  4. Tarkista palomuuri/virustorjunta-asetukset")
-        return 1
-    
-    print()
-    
-    # Verify installation
-    if not args.skip_verify:
-        if not verify_installation():
+            """
+        )
+        
+        parser.add_argument(
+            "--gpu",
+            action="store_true",
+            help="Asenna GPU-versio CUDA-tuella (vaatii NVIDIA-näytönohjaimen)"
+        )
+        
+        parser.add_argument(
+            "--skip-verify",
+            action="store_true",
+            help="Ohita asennuksen tarkistus"
+        )
+        
+        args = parser.parse_args()
+        
+        # Print banner
+        print_header("JugiAI - Paikallisen mallin tuen asennus")
+        
+        # Check prerequisites
+        if not check_python_version():
             return 1
+        
+        if not check_pip_available():
+            return 1
+        
+        print()
+        
+        # Install appropriate version
+        if args.gpu:
+            success = install_gpu_version()
+        else:
+            success = install_cpu_version()
+        
+        if not success:
+            print()
+            print_error("Asennus epäonnistui!")
+            print()
+            print_info("Yleisiä ratkaisuja:")
+            print_info("  1. Tarkista internet-yhteys")
+            print_info("  2. Asenna Visual C++ Build Tools:")
+            print_info("     https://visualstudio.microsoft.com/visual-cpp-build-tools/")
+            print_info("  3. Yritä uudelleen järjestelmänvalvojana")
+            print_info("  4. Tarkista palomuuri/virustorjunta-asetukset")
+            print_info("  5. Käytä --skip-verify jos asennus näyttää onnistuneen")
+            return 1
+        
+        print()
+        
+        # Verify installation
+        if not args.skip_verify:
+            try:
+                if not verify_installation():
+                    print_warning("Tarkistus epäonnistui, mutta asennus saattoi silti onnistua")
+                    print_info("Kokeile käynnistää JugiAI ja tarkista toimiiko paikallinen malli")
+                    return 1
+            except Exception as e:
+                print_error(f"Tarkistus epäonnistui odottamattoman virheen vuoksi: {e}")
+                print_warning("Asennus saattoi silti onnistua")
+                print_info("Kokeile käynnistää JugiAI ja tarkista toimiiko paikallinen malli")
+                return 1
+        
+        print()
+        
+        # Show usage instructions
+        try:
+            show_usage_instructions(args.gpu)
+        except Exception as e:
+            print_warning(f"Käyttöohjeiden näyttö epäonnistui: {e}")
+        
+        print_success("Asennus valmis! 🎉")
+        print()
+        
+        return 0
     
-    print()
-    
-    # Show usage instructions
-    show_usage_instructions(args.gpu)
-    
-    print_success("Asennus valmis! 🎉")
-    print()
-    
-    return 0
+    except Exception as e:
+        print()
+        print_error(f"Kriittinen virhe asennuksessa: {e}")
+        print_info("Jos ongelma jatkuu, raportoi virhe GitHubissa:")
+        print_info("https://github.com/AnomFIN/AnomAI/issues")
+        return 1
 
 
 if __name__ == "__main__":
