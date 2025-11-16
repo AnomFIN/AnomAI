@@ -45,7 +45,7 @@ class FormatLlamaImportErrorTests(unittest.TestCase):
             message = jugiai._format_llama_import_error(fake_exc)
 
         self.assertIn("Ympäristövinkit:", message)
-        self.assertIn(r"\.venv\Scripts\activate", message)
+        self.assertIn(r"\.venv\Scripts\activate.bat", message)
 
 
 class WindowsStoreGuardTests(unittest.TestCase):

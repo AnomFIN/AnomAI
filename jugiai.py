@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import sys
@@ -138,7 +139,7 @@ def _format_llama_import_error(exc: Exception) -> str:
     venv_python = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
     if os.path.exists(venv_python):
         suggested_launch.append(
-            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate` ja aja sitten `python jugiai.py`."
+            r"Vaihtoehtoisesti aktivoi virtuaaliympäristö: `\.venv\Scripts\activate.bat` ja aja sitten `python jugiai.py`."
         )
 
     if suggested_launch:
@@ -245,9 +246,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "frequency_penalty": 0.0,
     # Backend: "openai" tai "local"
     "backend": "openai",
+    # Offline mode: when True, disables all OpenAI API calls
+    "offline_mode": False,
     # Paikallinen malli
     "local_model_path": "",
     "local_threads": 0,  # 0 = auto
+    "use_gpu": "cpu",  # "cpu", "gpu", or "both"
+    "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
@@ -266,12 +271,266 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "o4-mini",
         "o3-mini",
     ],
+    # Kamera-asetukset
+    "camera_ip": "",
+    "camera_password": "",
+    "camera_username": "admin",
+    "camera_port": 8080,
+    "discovered_cameras": [],
 }
 
 
 def _log_warning(message: str) -> None:
     """Simple console warning logger for watermark and other non-critical errors."""
     print(f"[WARNING] {message}", flush=True)
+
+
+def discover_cameras_on_network(timeout: float = 2.0) -> List[Dict[str, Any]]:
+    """
+    Discover IP cameras on the local network by scanning common IP camera ports.
+    Returns a list of discovered cameras with their IP addresses.
+    """
+    import socket
+    import ipaddress
+    
+    discovered = []
+    
+    # Get local IP to determine subnet
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        return discovered
+    
+    # Common IP camera ports
+    common_ports = [80, 8080, 554, 8000, 8081]
+    
+    # Get network subnet
+    try:
+        network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
+    except Exception:
+        return discovered
+    
+    # Scan only a subset of the network (first 10 and last 10 IPs to save time)
+    all_hosts = list(network.hosts())
+    if len(all_hosts) <= 20:
+        # If network is small, scan all hosts
+        ips_to_scan = all_hosts
+    else:
+        # Otherwise, scan first 10 and last 10 to avoid duplicates
+        ips_to_scan = all_hosts[:10] + all_hosts[-10:]
+    
+    for ip in ips_to_scan:
+        ip_str = str(ip)
+        for port in common_ports:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                result = sock.connect_ex((ip_str, port))
+                sock.close()
+                
+                if result == 0:
+                    # Port is open, likely a camera
+                    discovered.append({
+                        "ip": ip_str,
+                        "port": port,
+                        "name": f"Kamera {ip_str}:{port}"
+                    })
+                    break  # Found a port, no need to check others for this IP
+            except Exception:
+                continue
+    
+    return discovered
+
+
+class LocalModelManager:
+    """Manages the lifecycle of a local GGUF model with GPU support and fallback."""
+    
+    def __init__(self):
+        self.llm = None
+        self.model_path = None
+        self.loaded_params = {}
+        self._loading = False
+    
+    def get_model(self, config: Dict[str, Any], safe_log_fn) -> Any:
+        """
+        Get or load the local model based on config.
+        Returns the Llama instance or raises RuntimeError.
+        """
+        model_path = (config.get("local_model_path") or "").strip()
+        
+        # Validate model path
+        if not model_path:
+            raise RuntimeError(
+                "Paikallista mallia ei ole valittu. Avaa asetukset ja valitse malli."
+            )
+        
+        if not os.path.exists(model_path):
+            raise RuntimeError(
+                f"Paikallista mallia ei löydy: {model_path}\n"
+                "Tarkista polku asetuksista tai lataa malli uudelleen."
+            )
+        
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Virheellinen mallitiedosto: {model_path}\n"
+                "Polku on hakemisto, ei tiedosto."
+            )
+        
+        # Build current parameters
+        current_params = {
+            "n_ctx": int(config.get("local_n_ctx", 4096)),
+            "n_batch": int(config.get("local_n_batch", 256)),
+            "n_threads": config.get("local_threads", 0),
+            "n_gpu_layers": int(config.get("local_gpu_layers", -1)),
+            "prefer_gpu": bool(config.get("prefer_gpu", True)),
+            "seed": config.get("local_seed"),
+            "rope_scaling": config.get("local_rope_scale"),
+        }
+        
+        # Check if we need to reload
+        needs_reload = (
+            self.llm is None or
+            self.model_path != model_path or
+            self.loaded_params != current_params
+        )
+        
+        if needs_reload:
+            if self._loading:
+                raise RuntimeError("Malli on jo ladattavana. Odota hetki.")
+            
+            self._loading = True
+            try:
+                self._load_model(model_path, current_params, safe_log_fn)
+            finally:
+                self._loading = False
+        
+        return self.llm
+    
+    def _load_model(self, model_path: str, params: Dict[str, Any], safe_log_fn):
+        """Load the model with the given parameters."""
+        try:
+            from llama_cpp import Llama
+        except Exception as exc:
+            raise RuntimeError(_format_llama_import_error(exc)) from exc
+        
+        safe_log_fn(f"Loading local model: {os.path.basename(model_path)}")
+        
+        # Determine GPU layers
+        n_gpu_layers = params["n_gpu_layers"]
+        prefer_gpu = params["prefer_gpu"]
+        
+        if not prefer_gpu:
+            # Force CPU mode
+            safe_log_fn("GPU disabled by prefer_gpu=False, using CPU only")
+            n_gpu_layers = 0
+        elif n_gpu_layers == -1:
+            # Auto: try GPU, fallback to CPU
+            n_gpu_layers = -1  # Let llama-cpp-python auto-detect
+        
+        # Build Llama kwargs
+        llama_kwargs = {
+            "model_path": model_path,
+            "n_ctx": params["n_ctx"],
+            "n_batch": params["n_batch"],
+            "verbose": False,
+        }
+        
+        # Handle threads (0 or None = auto)
+        n_threads = params["n_threads"]
+        if n_threads and n_threads > 0:
+            llama_kwargs["n_threads"] = n_threads
+        
+        # Add GPU layers
+        if n_gpu_layers != 0:
+            llama_kwargs["n_gpu_layers"] = n_gpu_layers
+        
+        # Add seed if specified
+        if params["seed"] is not None:
+            llama_kwargs["seed"] = int(params["seed"])
+        
+        # Add rope scaling if specified
+        if params["rope_scaling"] is not None:
+            llama_kwargs["rope_freq_scale"] = float(params["rope_scaling"])
+        
+        # Try loading with GPU
+        gpu_attempted = n_gpu_layers != 0 and prefer_gpu
+        
+        try:
+            self.llm = Llama(**llama_kwargs)
+            self.model_path = model_path
+            self.loaded_params = params.copy()
+            
+            if gpu_attempted:
+                safe_log_fn(
+                    f"Local model loaded successfully with GPU support "
+                    f"(n_ctx={params['n_ctx']}, n_gpu_layers={n_gpu_layers})"
+                )
+            else:
+                safe_log_fn(
+                    f"Local model loaded successfully in CPU mode "
+                    f"(n_ctx={params['n_ctx']})"
+                )
+        except Exception as exc:
+            if gpu_attempted:
+                # GPU failed, try CPU fallback
+                safe_log_fn(
+                    f"GPU initialization failed: {exc}. Falling back to CPU mode..."
+                )
+                
+                # Remove GPU layers and try again
+                llama_kwargs_cpu = llama_kwargs.copy()
+                llama_kwargs_cpu.pop("n_gpu_layers", None)
+                
+                try:
+                    self.llm = Llama(**llama_kwargs_cpu)
+                    self.model_path = model_path
+                    # Update loaded params to reflect CPU mode
+                    params_cpu = params.copy()
+                    params_cpu["n_gpu_layers"] = 0
+                    self.loaded_params = params_cpu
+                    safe_log_fn(
+                        f"Local model loaded successfully in CPU fallback mode "
+                        f"(n_ctx={params['n_ctx']})"
+                    )
+                    
+                    # Show user-friendly messagebox about GPU failure
+                    messagebox.showwarning(
+                        "GPU-kiihdytys ei käytössä",
+                        f"GPU-kiihdytyksen käynnistys epäonnistui:\n{exc}\n\n"
+                        "Malli on ladattu CPU-tilassa. Jos haluat käyttää GPU:ta, "
+                        "varmista että sinulla on CUDA-tuella varustettu llama-cpp-python-versio.\n\n"
+                        "Asennus: pip install llama-cpp-python --prefer-binary\n"
+                        "tai CUDA-tuki: pip install llama-cpp-python --extra-index-url "
+                        "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121"
+                    )
+                except Exception as cpu_exc:
+                    # Even CPU failed
+                    raise RuntimeError(
+                        f"Mallin lataus epäonnistui sekä GPU- että CPU-tilassa.\n\n"
+                        f"GPU-virhe: {exc}\n"
+                        f"CPU-virhe: {cpu_exc}\n\n"
+                        "Tarkista että llama-cpp-python on asennettu oikein."
+                    ) from cpu_exc
+            else:
+                # CPU mode failed directly
+                raise RuntimeError(
+                    f"Mallin lataus epäonnistui: {exc}\n\n"
+                    "Tarkista että llama-cpp-python on asennettu oikein ja "
+                    "mallin polku on oikea."
+                ) from exc
+    
+    def unload(self):
+        """Unload the current model."""
+        self.llm = None
+        self.model_path = None
+        self.loaded_params = {}
+
+
+# Global model manager instance
+_local_model_manager = LocalModelManager()
 
 
 class JugiAIApp(tk.Tk):
@@ -289,8 +548,10 @@ class JugiAIApp(tk.Tk):
         self._wm_scaled_img = None
         self._wm_overlay: tk.Label | None = None
         self.watermark_enabled = True  # Flag to track if watermark loading is available
-        self.llm = None
-        self.llm_model_path = None
+        
+        # Logo for messages
+        self._msg_logo_img = None
+        self._logo_refs: List[Any] = []  # Keep references to prevent garbage collection
 
         self._is_loading_history = False
         self._history_viewer: Dict[str, Any] | None = None
@@ -443,6 +704,9 @@ class JugiAIApp(tk.Tk):
 
         self._build_ui()
 
+        # Detect and log offline mode
+        self._detect_and_log_offline_mode()
+
         # Jos avain puuttuu, avaa asetukset heti
         if not self.config_dict.get("api_key"):
             self.after(200, self.open_settings)
@@ -453,12 +717,95 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+        
+        # Add smooth scroll animation support
+        self._add_smooth_scroll_bindings()
+        
+        # Add aesthetic enhancements
+        self._add_button_hover_effects()
 
     def _safe_log(self, *args, **kwargs):
         try:
             print("[JugiAI]", *args, **kwargs)
         except Exception:
             pass
+    
+    def _add_smooth_scroll_bindings(self) -> None:
+        """Add smooth scrolling behavior to the chat area."""
+        def smooth_scroll(event):
+            try:
+                # Calculate scroll amount - just use delta directly for smooth effect
+                delta = -1 if event.delta > 0 else 1
+                self.chat.yview_scroll(delta, "units")
+                return "break"
+            except Exception:
+                pass
+        
+        try:
+            self.chat.bind("<MouseWheel>", smooth_scroll)
+        except Exception:
+            pass
+    
+    def _add_button_hover_effects(self) -> None:
+        """Add subtle hover effects to enhance user experience."""
+        def on_enter(event):
+            try:
+                widget = event.widget
+                if isinstance(widget, tk.Widget):
+                    # Store original cursor
+                    widget._original_cursor = widget.cget("cursor") if hasattr(widget, "cget") else "arrow"
+                    widget.configure(cursor="hand2")
+            except Exception:
+                pass
+        
+        def on_leave(event):
+            try:
+                widget = event.widget
+                if isinstance(widget, tk.Widget) and hasattr(widget, "_original_cursor"):
+                    widget.configure(cursor=widget._original_cursor)
+            except Exception:
+                pass
+        
+        # Apply to send button if it exists
+        try:
+            if hasattr(self, "send_btn"):
+                self.send_btn.bind("<Enter>", on_enter)
+                self.send_btn.bind("<Leave>", on_leave)
+        except Exception:
+            pass
+
+    def _is_offline_mode(self) -> bool:
+        """Check if the application is running in offline mode."""
+        # Explicit offline mode flag
+        if self.config_dict.get("offline_mode", False):
+            return True
+        
+        # Local backend is always offline
+        backend = (self.config_dict.get("backend") or "openai").lower()
+        api_key = (self.config_dict.get("api_key") or "").strip()
+        
+        if backend == "local":
+            return True
+        
+        # OpenAI backend but no API key means forced offline
+        if backend == "openai" and not api_key:
+            return True
+        
+        return False
+
+    def _detect_and_log_offline_mode(self) -> None:
+        """Detect offline mode and log appropriate messages."""
+        if self._is_offline_mode():
+            backend = (self.config_dict.get("backend") or "openai").lower()
+            if backend == "local":
+                model_path = (self.config_dict.get("local_model_path") or "").strip()
+                if model_path and os.path.exists(model_path):
+                    self._safe_log("Running in offline mode — using local AI backend only.")
+                    self._safe_log(f"Local model: {os.path.basename(model_path)}")
+                else:
+                    self._safe_log("Running in offline mode — local model not configured.")
+            else:
+                self._safe_log("Running in offline mode — no API key available.")
 
     # --- UI ---
     def _ensure_profiles(self) -> None:
@@ -542,7 +889,7 @@ class JugiAIApp(tk.Tk):
             "last": tk.StringVar(value="–"),
         }
 
-        header = ttk.Frame(root, style="Nav.TFrame", padding=(24, 20))
+        header = ttk.Frame(root, style="Nav.TFrame", padding=(16, 12))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         header.columnconfigure(1, weight=1)
@@ -550,12 +897,12 @@ class JugiAIApp(tk.Tk):
 
         brand_box = ttk.Frame(header, style="Nav.TFrame")
         brand_box.grid(row=0, column=0, sticky="w")
-        ttk.Label(brand_box, text="JugiAI Command Deck", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(brand_box, text="JugiAI", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(
             brand_box,
-            text="AnomFIN · Strateginen tekoälytyökalu",
+            text="AnomFIN · Tekoälytyökalu",
             style="NavSubtitle.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(2, 0))
 
         status_box = ttk.Frame(header, style="Nav.TFrame")
         status_box.grid(row=0, column=1, sticky="w", padx=(24, 0))
@@ -589,22 +936,22 @@ class JugiAIApp(tk.Tk):
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_quick_change)
 
         buttons_bar = ttk.Frame(control_box, style="Nav.TFrame")
-        buttons_bar.grid(row=1, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        buttons_bar.grid(row=1, column=0, columnspan=2, sticky="e", pady=(8, 0))
         ttk.Button(buttons_bar, text="Profiilit", style="Toolbar.TButton", command=self.open_profiles).pack(
-            side=tk.LEFT, padx=(0, 8)
+            side=tk.LEFT, padx=(0, 6)
         )
         ttk.Button(buttons_bar, text="Tyhjennä", style="Toolbar.TButton", command=self.clear_history).pack(
-            side=tk.LEFT, padx=(0, 8)
+            side=tk.LEFT, padx=(0, 6)
         )
         ttk.Button(
             buttons_bar,
             text="Tallenteet 🎞️",
             style="Toolbar.TButton",
             command=self.open_history_viewer,
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        ).pack(side=tk.LEFT, padx=(0, 6))
         zoom_frame = ttk.Frame(buttons_bar, style="Nav.TFrame")
-        zoom_frame.pack(side=tk.LEFT, padx=(4, 8))
-        ttk.Label(zoom_frame, text="Zoom", style="NavSubtitle.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        zoom_frame.pack(side=tk.LEFT, padx=(2, 6))
+        ttk.Label(zoom_frame, text="Zoom", style="NavSubtitle.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             zoom_frame,
             text="−",
@@ -618,7 +965,7 @@ class JugiAIApp(tk.Tk):
             width=3,
             style="Toolbar.TButton",
             command=lambda: self.adjust_font_size(1),
-        ).pack(side=tk.LEFT, padx=(6, 0))
+        ).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(buttons_bar, text="Asetukset ⚙", style="Toolbar.TButton", command=self.open_settings).pack(
             side=tk.LEFT
         )
@@ -638,7 +985,7 @@ class JugiAIApp(tk.Tk):
             card = tk.Frame(
                 overview,
                 bg="#0f172a",
-                highlightbackground="#1f2937",
+                highlightbackground="#14f1ff" if idx == 0 else "#1f2937",
                 highlightthickness=1,
                 bd=0,
                 padx=18,
@@ -725,7 +1072,7 @@ class JugiAIApp(tk.Tk):
 
         ttk.Separator(composer, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(12, 12))
 
-        self.input = tk.Text(composer, height=5, wrap=tk.WORD, relief=tk.FLAT)
+        self.input = tk.Text(composer, height=3, wrap=tk.WORD, relief=tk.FLAT)
         self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
             bg="#071427",
@@ -784,7 +1131,17 @@ class JugiAIApp(tk.Tk):
             backend_label = "Paikallinen"
         else:
             backend_label = backend.title()
-        model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
+        
+        # For local backend, extract model name from the file path
+        if backend == "local":
+            local_model_path = (self.config_dict.get("local_model_path") or "").strip()
+            if local_model_path:
+                # Extract filename without extension
+                model = os.path.splitext(os.path.basename(local_model_path))[0]
+            else:
+                model = "ei valittu"
+        else:
+            model = self.config_dict.get("model", DEFAULT_CONFIG["model"])
         return f"{backend_label} · {model}"
 
     def _update_overview_metrics(self) -> None:
@@ -1171,10 +1528,19 @@ class JugiAIApp(tk.Tk):
         self.current_stream_text = ""
         self.stream_start_index = None
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, "▮ ", ("separator_assistant",))
+        
+        # Try to show logo instead of text prefix
+        logo_img = self._load_message_logo()
+        if logo_img:
+            self._logo_refs.append(logo_img)  # Keep reference
+            self.chat.image_create(tk.END, image=logo_img)
+            self.chat.insert(tk.END, " ", ("separator_assistant",))
+        else:
+            self.chat.insert(tk.END, "▮ ", ("separator_assistant",))
+            
         self.chat.insert(tk.END, f"JugiAI · {timestamp}\n", ("header_assistant",))
         self.stream_start_index = self.chat.index(tk.END)
-        self.chat.insert(tk.END, "JugiAI työskentelee…\n\n", ("role_assistant",))
+        self.chat.insert(tk.END, "...\n\n", ("role_assistant",))
         self.chat.see(tk.END)
         self.chat.configure(state=tk.DISABLED)
 
@@ -1216,6 +1582,9 @@ class JugiAIApp(tk.Tk):
         color = colors.get(state, "#facc15")
         try:
             self.ping_canvas.itemconfig(self.ping_indicator, fill=color)
+            # Add subtle pulse animation for "ok" state
+            if state == "ok":
+                self._animate_ping_pulse()
         except Exception:
             pass
         if state == "ok" and latency is not None:
@@ -1224,9 +1593,47 @@ class JugiAIApp(tk.Tk):
             self.ping_var.set(f"PING: {latency} ms (varoitus)")
         else:
             self.ping_var.set("PING: -- ms (ei yhteyttä)")
+    
+    def _animate_ping_pulse(self, step: int = 0) -> None:
+        """Create a subtle pulsing animation for the ping indicator."""
+        if step >= 10:
+            return  # Animation complete
+        
+        try:
+            # Calculate size variation for pulse effect
+            base_size = 2
+            max_size = 14
+            pulse_range = 2
+            
+            # Create sine-wave pulse effect
+            angle = (step / 10.0) * math.pi * 2
+            size_offset = int(pulse_range * math.sin(angle) / 2)
+            
+            new_coords = (
+                base_size - size_offset,
+                base_size - size_offset,
+                max_size + size_offset,
+                max_size + size_offset
+            )
+            
+            self.ping_canvas.coords(self.ping_indicator, *new_coords)
+            
+            # Schedule next step
+            if step < 9:
+                self.after(50, lambda: self._animate_ping_pulse(step + 1))
+            else:
+                # Reset to original size
+                self.ping_canvas.coords(self.ping_indicator, 2, 2, 14, 14)
+        except Exception:
+            pass
 
     def _refresh_ping(self) -> None:
         def worker() -> None:
+            # Skip ping check if in offline mode
+            if self._is_offline_mode():
+                self.after(0, lambda: self._update_ping_indicator(None, "error"))
+                return
+            
             api_key = self.config_dict.get("api_key", "").strip()
             url = "https://api.openai.com/v1/models"
             req = urllib.request.Request(url, method="GET")
@@ -1304,7 +1711,19 @@ class JugiAIApp(tk.Tk):
         content = (content or "").strip()
 
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, "▮ ", (separator_tag,))
+        
+        # For assistant messages, try to show logo instead of text prefix
+        if role == "assistant":
+            logo_img = self._load_message_logo()
+            if logo_img:
+                self._logo_refs.append(logo_img)  # Keep reference
+                self.chat.image_create(tk.END, image=logo_img)
+                self.chat.insert(tk.END, " ", (separator_tag,))
+            else:
+                self.chat.insert(tk.END, "▮ ", (separator_tag,))
+        else:
+            self.chat.insert(tk.END, "▮ ", (separator_tag,))
+            
         self.chat.insert(tk.END, f"{display_name} · {ts}\n", (header_tag,))
         if content:
             self.chat.insert(tk.END, content + "\n", (body_tag,))
@@ -1381,12 +1800,26 @@ class JugiAIApp(tk.Tk):
             self.typing_status_var.set("Työstetään pyyntöä…")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeBusy.TLabel")
+                # Add a subtle fade/pulse effect
+                self._animate_status_badge_change()
             self.send_btn.configure(state=tk.DISABLED)
         else:
             self.typing_status_var.set("Valmis")
             if hasattr(self, "typing_badge"):
                 self.typing_badge.configure(style="StatusBadgeIdle.TLabel")
             self.send_btn.configure(state=tk.NORMAL)
+    
+    def _animate_status_badge_change(self) -> None:
+        """Add a subtle animation when the status badge changes."""
+        try:
+            # Simple flash effect by temporarily modifying relief
+            if hasattr(self, "typing_badge"):
+                original_style = self.typing_badge.cget("style")
+                # This creates a subtle visual feedback
+                self.typing_badge.configure(relief=tk.RAISED)
+                self.after(100, lambda: self.typing_badge.configure(relief=tk.FLAT) if hasattr(self, "typing_badge") else None)
+        except Exception:
+            pass
 
     # --- Model call ---
     def _worker_call_openai(self) -> None:
@@ -1432,6 +1865,35 @@ class JugiAIApp(tk.Tk):
         else:
             yield from self._call_openai_stream()
 
+    def _validate_thread_count(self, requested_threads: int) -> Optional[int]:
+        """
+        Validate and cap thread count to reasonable limits.
+        
+        Args:
+            requested_threads: The number of threads requested by the user (0 = auto)
+        
+        Returns:
+            None for auto-detect, or a capped thread count
+        """
+        # 0 means auto-detect
+        if requested_threads <= 0:
+            return None
+        
+        # Get system CPU count
+        cpu_count = os.cpu_count() or 4
+        
+        # Cap at 4x CPU count (generous upper bound)
+        max_threads = cpu_count * 4
+        
+        if requested_threads > max_threads:
+            self._safe_log(
+                f"Thread count {requested_threads} exceeds recommended maximum {max_threads} "
+                f"(4x CPU count {cpu_count}). Capping to {max_threads}."
+            )
+            return max_threads
+        
+        return requested_threads
+
     def _build_messages_for_backend(self) -> List[Dict[str, Any]]:
         cfg = self.config_dict
         messages: List[Dict[str, Any]] = []
@@ -1442,6 +1904,61 @@ class JugiAIApp(tk.Tk):
             role = msg.get("role", "user")
             messages.append({"role": role, "content": self._compose_message_for_backend(msg)})
         return messages
+    
+    def _build_messages_for_backend_with_context_limit(self) -> List[Dict[str, Any]]:
+        """
+        Build messages for backend with context window management.
+        Trims oldest messages if they would exceed local_n_ctx.
+        """
+        cfg = self.config_dict
+        backend = cfg.get("backend", "openai")
+        
+        # Only apply context limiting for local backend
+        if backend != "local":
+            return self._build_messages_for_backend()
+        
+        n_ctx = int(cfg.get("local_n_ctx", 4096))
+        
+        # Build full messages first
+        messages = self._build_messages_for_backend()
+        
+        # Rough token estimation: 4 chars per token on average
+        # This is a heuristic; proper tokenization would be better but requires the model's tokenizer
+        def estimate_tokens(msgs: List[Dict[str, Any]]) -> int:
+            total_chars = sum(len(str(m.get("content", ""))) for m in msgs)
+            return total_chars // 4
+        
+        # If we're within limits, return as-is
+        if estimate_tokens(messages) <= n_ctx * 0.8:  # Use 80% of context as safety margin
+            return messages
+        
+        # Need to trim - keep system prompt and most recent messages
+        sys_prompt_msgs = [m for m in messages if m.get("role") == "system"]
+        other_msgs = [m for m in messages if m.get("role") != "system"]
+        
+        # Start with system prompt
+        result = sys_prompt_msgs.copy()
+        
+        # Add messages from newest to oldest until we approach the limit
+        target_tokens = int(n_ctx * 0.8)
+        for msg in reversed(other_msgs):
+            result_with_msg = sys_prompt_msgs + [msg] + result[len(sys_prompt_msgs):]
+            if estimate_tokens(result_with_msg) > target_tokens:
+                break
+            result = result_with_msg
+        
+        # Ensure we have at least the last user message
+        if len(result) <= len(sys_prompt_msgs) and other_msgs:
+            result = sys_prompt_msgs + [other_msgs[-1]]
+        
+        trimmed_count = len(messages) - len(result)
+        if trimmed_count > 0:
+            self._safe_log(
+                f"Trimmed {trimmed_count} oldest message(s) to fit context window "
+                f"(n_ctx={n_ctx})"
+            )
+        
+        return result
 
     def _compose_message_for_backend(self, message: Dict[str, Any]) -> str:
         text = (message.get("content") or "").strip()
@@ -1461,6 +1978,13 @@ class JugiAIApp(tk.Tk):
         return "\n".join(lines)
 
     def _call_openai_stream(self) -> Generator[str, None, None]:
+        # Check offline mode first
+        if self._is_offline_mode():
+            raise RuntimeError(
+                "API-kutsu estetty: sovellus on offline-tilassa. "
+                "Valitse paikallinen malli tai lisää API-avain asetuksissa."
+            )
+        
         cfg = self.config_dict
         api_key = cfg.get("api_key")
         if not api_key:
@@ -1531,21 +2055,58 @@ class JugiAIApp(tk.Tk):
 
     def _call_local_llm(self) -> str:
         cfg = self.config_dict
-        model_path = (cfg.get("local_model_path") or "").strip()
-        if not model_path or not os.path.exists(model_path):
-            raise RuntimeError("Paikallista mallia ei ole valittu (.gguf). Avaa asetukset.")
+        
+        # Get or load the model using the model manager
+        llm = _local_model_manager.get_model(cfg, self._safe_log)
+        
+        if not os.path.exists(model_path):
+            raise RuntimeError(
+                f"Paikallista mallia ei löydy: {model_path}\n"
+                "Tarkista polku asetuksista tai lataa malli uudelleen."
+            )
+        
+        # Validate it's a file, not a directory
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Virheellinen mallitiedosto: {model_path}\n"
+                "Polku on hakemisto, ei tiedosto."
+            )
+        
         try:
             from llama_cpp import Llama
         except Exception as exc:
             raise RuntimeError(_format_llama_import_error(exc)) from exc
 
         if self.llm is None or self.llm_model_path != model_path:
+            self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
+            # Validate and get thread count
+            try:
+                requested_threads = int(cfg.get("local_threads", 0))
+            except (ValueError, TypeError):
+                requested_threads = 0  # Default to auto
+            validated_threads = self._validate_thread_count(requested_threads)
+            
+            # Determine GPU layers based on use_gpu setting
+            use_gpu = cfg.get("use_gpu", "cpu")
+            if use_gpu == "cpu":
+                n_gpu_layers = 0
+            elif use_gpu == "gpu":
+                n_gpu_layers = -1  # All layers to GPU
+            else:  # "both"
+                try:
+                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
+                except (ValueError, TypeError):
+                    n_gpu_layers = 0
+            
+            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
             self.llm = Llama(
                 model_path=model_path,
-                n_threads=int(cfg.get("local_threads", 0)) or None,
+                n_threads=validated_threads,
+                n_gpu_layers=n_gpu_layers,
                 verbose=False,
             )
             self.llm_model_path = model_path
+            self._safe_log("Local model loaded successfully.")
 
         messages = self._build_messages_for_backend()
 
@@ -1554,11 +2115,18 @@ class JugiAIApp(tk.Tk):
             "temperature": float(cfg.get("temperature", 0.7)),
             "top_p": float(cfg.get("top_p", 1.0)),
         }
-        mt = cfg.get("max_tokens")
-        if isinstance(mt, int) and mt > 0:
-            params["max_tokens"] = mt
+        
+        # Use local_max_tokens if specified, otherwise use max_tokens
+        local_mt = cfg.get("local_max_tokens")
+        if local_mt is not None and isinstance(local_mt, int) and local_mt > 0:
+            params["max_tokens"] = local_mt
+        else:
+            mt = cfg.get("max_tokens")
+            if isinstance(mt, int) and mt > 0:
+                params["max_tokens"] = mt
+        
         try:
-            out = self.llm.create_chat_completion(**params)
+            out = llm.create_chat_completion(**params)
             content = out["choices"][0]["message"]["content"]
         except Exception:
             # Fallback yksinkertaiseen prompttiin
@@ -1571,11 +2139,16 @@ class JugiAIApp(tk.Tk):
                 ]
             )
             prompt = (sys_prompt + "\n\n" + user_texts).strip()
-            out = self.llm(
+            
+            max_tokens_fallback = params.get("max_tokens", 256)
+            if not isinstance(max_tokens_fallback, int) or max_tokens_fallback <= 0:
+                max_tokens_fallback = 256
+            
+            out = llm(
                 prompt=prompt,
                 temperature=float(cfg.get("temperature", 0.7)),
                 top_p=float(cfg.get("top_p", 1.0)),
-                max_tokens=mt if isinstance(mt, int) and mt > 0 else 256,
+                max_tokens=max_tokens_fallback,
             )
             content = out.get("choices", [{}])[0].get("text", "")
         return content or ""
@@ -1866,10 +2439,12 @@ class JugiAIApp(tk.Tk):
         tab_openai = ttk.Frame(notebook)
         tab_local = ttk.Frame(notebook)
         tab_ui = ttk.Frame(notebook)
+        tab_camera = ttk.Frame(notebook)
         notebook.add(tab_general, text="Yleiset")
         notebook.add(tab_openai, text="OpenAI")
         notebook.add(tab_local, text="Paikallinen")
         notebook.add(tab_ui, text="Ulkoasu")
+        notebook.add(tab_camera, text="Kamera")
         # --- Tabs content ---
         # General
         g = tab_general
@@ -1941,7 +2516,7 @@ class JugiAIApp(tk.Tk):
         )
         _bind_scale_readout(pp_var, pp_readout, "{:+.2f}")
         row += 1
-        ttk.Label(g, text="Kannustaa uusiin aiheisiin – suurempi arvo vähentää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(g, text="Positiivinen arvo kannustaa uusiin aiheisiin, negatiivinen pysyy aiheessa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         ttk.Label(g, text="frequency_penalty (-2–2):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         fp_var = tk.DoubleVar(value=float(self.config_dict.get("frequency_penalty", 0.0)))
@@ -1955,7 +2530,7 @@ class JugiAIApp(tk.Tk):
         )
         _bind_scale_readout(fp_var, fp_readout, "{:+.2f}")
         row += 1
-        ttk.Label(g, text="Vähentää saman sanan toistumista useita kertoja peräkkäin.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(g, text="Positiivinen arvo vähentää toistoa, negatiivinen lisää toistoa.", style="Subtle.TLabel").grid(row=row, column=0, columnspan=2, sticky=tk.W)
         row += 1
         for i in range(2):
             g.columnconfigure(i, weight=1)
@@ -1982,15 +2557,57 @@ class JugiAIApp(tk.Tk):
         lpath_var = tk.StringVar(value=self.config_dict.get("local_model_path", ""))
         ttk.Entry(l, textvariable=lpath_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0))
         def choose_gguf():
-            p = filedialog.askopenfilename(filetypes=[("GGUF models", "*.gguf"), ("All files", "*.*")])
+            p = filedialog.askopenfilename(
+                title="Valitse GGUF-malli",
+                filetypes=[("GGUF models", "*.gguf"), ("All files", "*.*")]
+            )
             if p:
                 lpath_var.set(p)
         ttk.Button(l, text="Valitse…", command=choose_gguf).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
         row += 1
+        
+        # Calculate recommended thread range
+        cpu_count = os.cpu_count() or 4
+        max_recommended = cpu_count * 4
         ttk.Label(l, text="Säikeet (0 = auto):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         lthr_var = tk.IntVar(value=int(self.config_dict.get("local_threads", 0)))
-        ttk.Entry(l, textvariable=lthr_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Entry(l, textvariable=lthr_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
+        ttk.Label(
+            l, 
+            text=f"Suositus: 0 (auto) tai 1-{max_recommended} (max 4× CPU-ytimet: {cpu_count})",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
+        # GPU settings
+        ttk.Label(l, text="GPU-käyttö:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        use_gpu_var = tk.StringVar(value=self.config_dict.get("use_gpu", "cpu"))
+        gpu_frame = ttk.Frame(l)
+        gpu_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Radiobutton(gpu_frame, text="CPU", variable=use_gpu_var, value="cpu").pack(side=tk.LEFT)
+        ttk.Radiobutton(gpu_frame, text="GPU", variable=use_gpu_var, value="gpu").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Radiobutton(gpu_frame, text="Molemmat", variable=use_gpu_var, value="both").pack(side=tk.LEFT, padx=(12, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="CPU = vain prosessori, GPU = kaikki kerrokseet GPU:lle, Molemmat = osa GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
+        # GPU layers count (for "both" mode)
+        ttk.Label(l, text="GPU-kerrokset (Molemmat-tila):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        n_gpu_layers_var = tk.IntVar(value=int(self.config_dict.get("n_gpu_layers", 0)))
+        ttk.Entry(l, textvariable=n_gpu_layers_var, width=10).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(
+            l,
+            text="0 = ei GPU:ta, -1 = kaikki GPU:lle, >0 = määritetty kerrosmäärä GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
         for i in range(3):
             l.columnconfigure(i, weight=1)
 
@@ -2001,7 +2618,10 @@ class JugiAIApp(tk.Tk):
         bg_var = tk.StringVar(value=self.config_dict.get("background_path", ""))
         ttk.Entry(u, textvariable=bg_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         def choose_bg():
-            p = filedialog.askopenfilename(filetypes=[("Kuvat", "*.png;*.gif"), ("Kaikki", "*.*")])
+            p = filedialog.askopenfilename(
+                title="Valitse taustakuva",
+                filetypes=[("Kuvat", "*.png;*.gif"), ("Kaikki", "*.*")]
+            )
             if p:
                 bg_var.set(p)
         ttk.Button(u, text="Valitse…", command=choose_bg).grid(row=row, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
@@ -2058,6 +2678,124 @@ class JugiAIApp(tk.Tk):
         for i in range(3):
             u.columnconfigure(i, weight=1)
 
+        # Camera tab
+        c = tab_camera
+        row = 0
+        
+        # Manual camera configuration section
+        ttk.Label(c, text="Manuaalinen kamerayhteys", style="SectionTitle.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 12)
+        )
+        row += 1
+        
+        ttk.Label(c, text="Kameran IP-osoite:").grid(row=row, column=0, sticky=tk.W)
+        camera_ip_var = tk.StringVar(value=self.config_dict.get("camera_ip", ""))
+        ttk.Entry(c, textvariable=camera_ip_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Käyttäjätunnus:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_username_var = tk.StringVar(value=self.config_dict.get("camera_username", "admin"))
+        ttk.Entry(c, textvariable=camera_username_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Salasana:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_password_var = tk.StringVar(value=self.config_dict.get("camera_password", ""))
+        ttk.Entry(c, textvariable=camera_password_var, show="*").grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        row += 1
+        
+        ttk.Label(c, text="Portti:").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        camera_port_var = tk.IntVar(value=int(self.config_dict.get("camera_port", 8080)))
+        ttk.Spinbox(c, from_=1, to=65535, textvariable=camera_port_var, width=10).grid(
+            row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0)
+        )
+        row += 1
+        
+        ttk.Separator(c, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=3, sticky=tk.EW, pady=(16, 16))
+        row += 1
+        
+        # Camera discovery section
+        ttk.Label(c, text="Automaattinen kamerahaku", style="SectionTitle.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 12)
+        )
+        row += 1
+        
+        ttk.Label(c, text="Etsi kamerat WiFi-verkosta:").grid(row=row, column=0, sticky=tk.W)
+        discovery_status_var = tk.StringVar(value="Valmis")
+        ttk.Label(c, textvariable=discovery_status_var, style="Subtle.TLabel").grid(
+            row=row, column=1, sticky=tk.W, padx=(8, 0)
+        )
+        row += 1
+        
+        # Listbox for discovered cameras
+        cameras_frame = ttk.Frame(c)
+        cameras_frame.grid(row=row, column=0, columnspan=3, sticky=tk.NSEW, pady=(8, 0))
+        cameras_frame.columnconfigure(0, weight=1)
+        cameras_frame.rowconfigure(0, weight=1)
+        
+        cameras_listbox = tk.Listbox(cameras_frame, height=6)
+        cameras_listbox.grid(row=0, column=0, sticky=tk.NSEW)
+        
+        cameras_scrollbar = ttk.Scrollbar(cameras_frame, orient=tk.VERTICAL, command=cameras_listbox.yview)
+        cameras_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        cameras_listbox.configure(yscrollcommand=cameras_scrollbar.set)
+        
+        # Load previously discovered cameras
+        discovered = self.config_dict.get("discovered_cameras", [])
+        for cam in discovered:
+            cameras_listbox.insert(tk.END, cam.get("name", f"{cam.get('ip')}:{cam.get('port')}"))
+        
+        row += 1
+        
+        # Discovery buttons
+        discovery_buttons = ttk.Frame(c)
+        discovery_buttons.grid(row=row, column=0, columnspan=3, sticky=tk.EW, pady=(8, 0))
+        
+        def start_discovery():
+            discovery_status_var.set("Etsitään kameroita...")
+            cameras_listbox.delete(0, tk.END)
+            dlg.update()
+            
+            def discovery_thread():
+                try:
+                    cameras = discover_cameras_on_network(timeout=1.5)
+                    self.config_dict["discovered_cameras"] = cameras
+                    
+                    def update_ui():
+                        cameras_listbox.delete(0, tk.END)
+                        for cam in cameras:
+                            cameras_listbox.insert(tk.END, cam.get("name", f"{cam.get('ip')}:{cam.get('port')}"))
+                        discovery_status_var.set(f"Löytyi {len(cameras)} kameraa")
+                    
+                    dlg.after(0, update_ui)
+                except Exception as e:
+                    def show_error():
+                        discovery_status_var.set(f"Virhe: {str(e)}")
+                    dlg.after(0, show_error)
+            
+            threading.Thread(target=discovery_thread, daemon=True).start()
+        
+        def use_selected_camera():
+            selection = cameras_listbox.curselection()
+            if not selection:
+                messagebox.showinfo("Valinta puuttuu", "Valitse ensin kamera listasta.")
+                return
+            
+            idx = selection[0]
+            cameras = self.config_dict.get("discovered_cameras", [])
+            if idx < len(cameras):
+                cam = cameras[idx]
+                camera_ip_var.set(cam.get("ip", ""))
+                camera_port_var.set(cam.get("port", 8080))
+                messagebox.showinfo("Kamera valittu", f"Kamera {cam.get('name')} valittu.\nMuista täyttää käyttäjätunnus ja salasana.")
+        
+        ttk.Button(discovery_buttons, text="Etsi kamerat", command=start_discovery).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(discovery_buttons, text="Käytä valittua kameraa", command=use_selected_camera).pack(side=tk.LEFT)
+        
+        row += 1
+        
+        for i in range(3):
+            c.columnconfigure(i, weight=1)
+
         # Buttons
         # Footer buttons (use pack to avoid mixing with grid in same container)
         btns = ttk.Frame(outer)
@@ -2069,6 +2807,7 @@ class JugiAIApp(tk.Tk):
                 self._preview_watermark_opacity(original_opacity)
             else:
                 self._remove_watermark_overlay()
+            dlg.grab_release()
             dlg.destroy()
 
         ttk.Button(btns, text="Sulje tallentamatta", command=cancel_and_close).pack(side=tk.RIGHT)
@@ -2086,7 +2825,32 @@ class JugiAIApp(tk.Tk):
             self.config_dict["frequency_penalty"] = float(f"{fp_var.get():.3f}")
             self.config_dict["backend"] = backend_var.get().strip() or "openai"
             self.config_dict["local_model_path"] = lpath_var.get().strip()
-            self.config_dict["local_threads"] = int(lthr_var.get()) if str(lthr_var.get()).isdigit() else 0
+            
+            # Validate and save thread count
+            try:
+                thread_value = int(lthr_var.get())
+                # Ensure non-negative, 0 means auto
+                thread_value = max(0, thread_value)
+                self.config_dict["local_threads"] = thread_value
+            except (ValueError, TypeError):
+                self.config_dict["local_threads"] = 0
+            
+            # Save GPU settings
+            use_gpu_value = use_gpu_var.get().strip()
+            if use_gpu_value not in ["cpu", "gpu", "both"]:
+                use_gpu_value = "cpu"
+            self.config_dict["use_gpu"] = use_gpu_value
+            
+            try:
+                n_gpu_layers_value = int(n_gpu_layers_var.get())
+                # Validate: -1 for all layers, 0 for CPU only, or positive for specific count
+                # Other negative values are not valid, default to 0
+                if n_gpu_layers_value < -1:
+                    n_gpu_layers_value = 0
+                self.config_dict["n_gpu_layers"] = n_gpu_layers_value
+            except (ValueError, TypeError):
+                self.config_dict["n_gpu_layers"] = 0
+            
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
             try:
@@ -2103,6 +2867,16 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["font_size"] = max(9, min(20, int(fsize_var.get())))
             except Exception:
                 self.config_dict["font_size"] = 12
+            
+            # Save camera settings
+            self.config_dict["camera_ip"] = camera_ip_var.get().strip()
+            self.config_dict["camera_username"] = camera_username_var.get().strip()
+            self.config_dict["camera_password"] = camera_password_var.get().strip()
+            try:
+                self.config_dict["camera_port"] = int(camera_port_var.get())
+            except Exception:
+                self.config_dict["camera_port"] = 8080
+            
             self.save_config()
             self._sync_quick_controls()
             self._update_overview_metrics()
@@ -2113,6 +2887,7 @@ class JugiAIApp(tk.Tk):
             fs = int(self.config_dict.get("font_size", 12))
             self.chat.configure(font=("Segoe UI", fs))
             self.input.configure(font=("Segoe UI", fs))
+            dlg.grab_release()
             dlg.destroy()
 
         ttk.Button(btns, text="Tallenna", command=save_and_close).pack(side=tk.RIGHT, padx=(0, 8))
@@ -2143,6 +2918,35 @@ class JugiAIApp(tk.Tk):
             self._app_icon_ref = img
         except Exception:
             pass
+    
+    def _load_message_logo(self) -> Optional[tk.PhotoImage]:
+        """Load and scale the logo for inline message display."""
+        path = self._resolve_default_logo()
+        if not path or not os.path.exists(path):
+            return None
+        
+        try:
+            if PIL_AVAILABLE:
+                # Use PIL for better quality scaling
+                from PIL import Image, ImageTk
+                pil_img = Image.open(path)
+                # Scale to approximately 24x24 pixels for inline display
+                pil_img.thumbnail((24, 24), Image.Resampling.LANCZOS)
+                return ImageTk.PhotoImage(pil_img)
+            else:
+                # Fallback to tk.PhotoImage with subsample
+                img = tk.PhotoImage(file=path)
+                # Subsample to make it smaller (larger number = smaller image)
+                # Ensure we don't divide by zero and have at least factor of 1
+                subsample_x = max(1, img.width() // 24) if img.width() >= 24 else 1
+                subsample_y = max(1, img.height() // 24) if img.height() >= 24 else 1
+                if subsample_x > 1 or subsample_y > 1:
+                    return img.subsample(subsample_x, subsample_y)
+                return img
+        except Exception as e:
+            _log_warning(f"Failed to load message logo: {e}")
+            return None
+
 
     def _load_watermark_image(self, respect_visibility: bool = True) -> None:
         """
@@ -2268,6 +3072,11 @@ class JugiAIApp(tk.Tk):
             return
 
     def _insert_watermark_if_needed(self) -> None:
+        # Check if watermark should be shown based on show_background setting
+        if not self.config_dict.get("show_background", True):
+            self._remove_watermark_overlay()
+            return
+        
         if not self._wm_img:
             self._remove_watermark_overlay()
             return
