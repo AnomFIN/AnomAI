@@ -29,7 +29,7 @@ class FormatLlamaImportErrorTests(unittest.TestCase):
 
         self.assertIn("Windows Storen stubi", message)
         self.assertIn("`py -3 jugiai.py`", message)
-        self.assertIn("Suositeltu korjaus:", message)
+        self.assertIn("Suositellut asennustavat:", message)
 
     def test_mentions_venv_activation_when_available(self) -> None:
         fake_exc = ImportError("No module named 'llama_cpp'")
