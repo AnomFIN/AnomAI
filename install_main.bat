@@ -26,11 +26,11 @@ cd /d "%SCRIPT_DIR%"
 REM Try to find Python 3 executable
 set "PY_CMD="
 where python >nul 2>&1
-if %errorlevel%==0 (
+if !errorlevel!==0 (
   set "PY_CMD=python"
 ) else (
   where py >nul 2>&1
-  if %errorlevel%==0 (
+  if !errorlevel!==0 (
     set "PY_CMD=py -3"
   )
 )
@@ -243,7 +243,7 @@ echo   python -m pip install llama-cpp-python --extra-index-url https://jllllll.
 echo.
 set "INSTALL_LLAMA="
 set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y): 
-if /I "%INSTALL_LLAMA%"=="" set "INSTALL_LLAMA=Y"
+if /I "!INSTALL_LLAMA!"=="" set "INSTALL_LLAMA=Y"
 if /I "%INSTALL_LLAMA%"=="N" (
   echo Skipping llama-cpp-python installation at user request.
   echo You can always install it later with:
@@ -252,7 +252,7 @@ if /I "%INSTALL_LLAMA%"=="N" (
   echo Installing llama-cpp-python with --prefer-binary...
   echo This may take several minutes...
   python -m pip install --upgrade --prefer-binary llama-cpp-python
-  if %errorlevel% neq 0 (
+  if !errorlevel! neq 0 (
     echo WARNING: llama-cpp-python installation failed. You can retry manually with:
     echo   %PY_CMD% -m pip install --upgrade --prefer-binary llama-cpp-python
     echo or follow Windows-specific wheel instructions from the README.
@@ -310,9 +310,26 @@ set "MAX_TOKENS=4000"
 set /p MAX_TOKENS=Max Tokens [4000]: 
 if "!MAX_TOKENS!"=="" set "MAX_TOKENS=4000"
 
-REM Create config.json using Python for proper JSON encoding
+REM Create config.json using a temporary Python script for proper JSON encoding
 echo Creating config.json...
-python -c "import json; config = {'api_key': '''!API_KEY!''', 'model': '''!MODEL!''', 'temperature': float('''!TEMPERATURE!'''), 'max_tokens': int('''!MAX_TOKENS!'''), 'backend': 'openai' if '''!API_KEY!''' else 'local', 'offline_mode': False}; json.dump(config, open('config.json', 'w', encoding='utf-8'), indent=2)" 2>config_error.txt
+> write_config.py echo import os
+>> write_config.py echo import json
+>> write_config.py echo.
+>> write_config.py echo def getenv(name, default=None):
+>> write_config.py echo     value = os.environ.get(name)
+>> write_config.py echo     return value if value is not None and value != "" else default
+>> write_config.py echo.
+>> write_config.py echo config = {
+>> write_config.py echo     "api_key": getenv("API_KEY", ""),
+>> write_config.py echo     "model": getenv("MODEL", "gpt-4o-mini"),
+>> write_config.py echo     "temperature": float(getenv("TEMPERATURE", "0.7")),
+>> write_config.py echo     "max_tokens": int(getenv("MAX_TOKENS", "4000")),
+>> write_config.py echo     "backend": "openai" if getenv("API_KEY", "") else "local",
+>> write_config.py echo     "offline_mode": False
+>> write_config.py echo }
+>> write_config.py echo with open("config.json", "w", encoding="utf-8") as f:
+>> write_config.py echo     json.dump(config, f, indent=2)
+python write_config.py 2>config_error.txt
 if !errorlevel! neq 0 (
   echo [ERROR] Failed to create config.json
   echo.
@@ -326,11 +343,13 @@ if !errorlevel! neq 0 (
   echo.
   echo You can manually create config.json after installation.
   del /f /q config_error.txt >nul 2>&1
+  del /f /q write_config.py >nul 2>&1
   call :maybe_pause
   endlocal
   exit /b 1
 )
 del /f /q config_error.txt >nul 2>&1
+del /f /q write_config.py >nul 2>&1
 echo [OK] Configuration saved to config.json
 
 :skip_config
@@ -386,8 +405,9 @@ if exist logo.ico set "ICON_ARG=--icon=logo.ico"
 
 python -m PyInstaller --onefile --windowed --name AnomAI !ICON_ARG! jugiai.py >nul 2>&1
 if !errorlevel! neq 0 (
-  echo [WARNING] PyInstaller build failed. See error above.
+  echo [WARNING] PyInstaller build failed. See PyInstaller documentation for troubleshooting.
   echo You can still run the application using start_jugiai.bat
+  echo To see detailed error output, run: python -m PyInstaller --onefile --windowed --name AnomAI jugiai.py
   goto :skip_exe_build
 )
 
@@ -417,10 +437,10 @@ if /I "!CREATE_SHORTCUT!"=="N" (
 
 REM Try to create desktop shortcut using PowerShell
 echo Creating desktop shortcut...
-set "TARGET_EXE=%SCRIPT_DIR%AnomAI.exe"
-if not exist "!TARGET_EXE!" set "TARGET_EXE=%SCRIPT_DIR%start_jugiai.bat"
+set "TARGET_EXE=!SCRIPT_DIR!AnomAI.exe"
+if not exist "!TARGET_EXE!" set "TARGET_EXE=!SCRIPT_DIR!start_jugiai.bat"
 
-powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\AnomAI.lnk'); $Shortcut.TargetPath = '!TARGET_EXE!'; $Shortcut.WorkingDirectory = '%SCRIPT_DIR%'; if (Test-Path '%SCRIPT_DIR%logo.ico') { $Shortcut.IconLocation = '%SCRIPT_DIR%logo.ico' }; $Shortcut.Save()" >nul 2>&1
+powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\AnomAI.lnk'); $Shortcut.TargetPath = '!TARGET_EXE!'; $Shortcut.WorkingDirectory = '!SCRIPT_DIR!'; if (Test-Path '!SCRIPT_DIR!logo.ico') { $Shortcut.IconLocation = '!SCRIPT_DIR!logo.ico' }; $Shortcut.Save()" >nul 2>&1
 
 if !errorlevel! equ 0 (
   echo [OK] Desktop shortcut created
