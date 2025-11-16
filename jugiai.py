@@ -730,6 +730,7 @@ class JugiAIApp(tk.Tk):
         self._load_watermark_image()
         self._insert_watermark_if_needed()
         self.after(1500, self._refresh_ping)
+        self.after(500, self._update_system_metrics)
         
         # Add smooth scroll animation support
         self._add_smooth_scroll_bindings()
@@ -902,7 +903,7 @@ class JugiAIApp(tk.Tk):
             "last": tk.StringVar(value="–"),
         }
 
-        header = ttk.Frame(root, style="Nav.TFrame", padding=(16, 12))
+        header = ttk.Frame(root, style="Nav.TFrame", padding=(12, 8))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         header.columnconfigure(1, weight=1)
@@ -931,6 +932,14 @@ class JugiAIApp(tk.Tk):
         self.ping_indicator = self.ping_canvas.create_oval(2, 2, 14, 14, fill="#f59e0b", outline="")
         self.ping_var = tk.StringVar(value="PING: -- ms")
         ttk.Label(status_box, textvariable=self.ping_var, style="NavSubtitle.TLabel").pack(side=tk.LEFT)
+        
+        # CPU/GPU usage indicators
+        ttk.Label(status_box, text=" · CPU: ", style="NavSubtitle.TLabel").pack(side=tk.LEFT)
+        self.cpu_var = tk.StringVar(value="--%%")
+        ttk.Label(status_box, textvariable=self.cpu_var, style="NavSubtitle.TLabel").pack(side=tk.LEFT)
+        ttk.Label(status_box, text=" · GPU: ", style="NavSubtitle.TLabel").pack(side=tk.LEFT)
+        self.gpu_var = tk.StringVar(value="--%%")
+        ttk.Label(status_box, textvariable=self.gpu_var, style="NavSubtitle.TLabel").pack(side=tk.LEFT)
 
         control_box = ttk.Frame(header, style="Nav.TFrame")
         control_box.grid(row=0, column=2, sticky="e")
@@ -983,7 +992,7 @@ class JugiAIApp(tk.Tk):
             side=tk.LEFT
         )
 
-        overview = ttk.Frame(root, style="Surface.TFrame", padding=(24, 12))
+        overview = ttk.Frame(root, style="Surface.TFrame", padding=(18, 8))
         overview.grid(row=1, column=0, sticky="ew")
         for idx in range(4):
             overview.columnconfigure(idx, weight=1)
@@ -1001,8 +1010,8 @@ class JugiAIApp(tk.Tk):
                 highlightbackground="#14f1ff" if idx == 0 else "#1f2937",
                 highlightthickness=1,
                 bd=0,
-                padx=18,
-                pady=14,
+                padx=14,
+                pady=10,
             )
             card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 12, 0))
             tk.Label(card, text=title, bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 10)).pack(anchor="w")
@@ -1067,7 +1076,7 @@ class JugiAIApp(tk.Tk):
 
         self._apply_font_size(self._active_font_size)
 
-        composer = ttk.Frame(root, style="Surface.TFrame", padding=(24, 20))
+        composer = ttk.Frame(root, style="Surface.TFrame", padding=(18, 12))
         composer.grid(row=3, column=0, sticky="ew")
         composer.columnconfigure(0, weight=1)
 
@@ -1085,7 +1094,7 @@ class JugiAIApp(tk.Tk):
 
         ttk.Separator(composer, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(12, 12))
 
-        self.input = tk.Text(composer, height=3, wrap=tk.WORD, relief=tk.FLAT)
+        self.input = tk.Text(composer, height=2, wrap=tk.WORD, relief=tk.FLAT)
         self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
             bg="#071427",
@@ -1674,6 +1683,78 @@ class JugiAIApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
         self.after(8000, self._refresh_ping)
+    
+    def _get_cpu_usage(self) -> Optional[float]:
+        """Get CPU usage percentage using platform-specific methods."""
+        try:
+            if sys.platform.startswith('win'):
+                # Use wmic on Windows
+                result = subprocess.run(
+                    ['wmic', 'cpu', 'get', 'loadpercentage'],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) >= 2:
+                        return float(lines[1].strip())
+            else:
+                # On Linux, try reading /proc/stat
+                with open('/proc/stat', 'r') as f:
+                    line = f.readline()
+                    values = [float(x) for x in line.split()[1:]]
+                    total = sum(values)
+                    idle = values[3]
+                    return ((total - idle) / total) * 100 if total > 0 else 0.0
+        except Exception:
+            pass
+        return None
+    
+    def _get_gpu_usage(self) -> Optional[float]:
+        """Get GPU usage percentage using nvidia-smi on Windows."""
+        try:
+            if sys.platform.startswith('win'):
+                # Use nvidia-smi on Windows (if available)
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if result.returncode == 0:
+                    # Get first GPU usage
+                    lines = result.stdout.strip().split('\n')
+                    if lines and lines[0]:
+                        return float(lines[0].strip())
+        except Exception:
+            pass
+        return None
+    
+    def _update_system_metrics(self) -> None:
+        """Update CPU and GPU usage indicators."""
+        def worker() -> None:
+            cpu = self._get_cpu_usage()
+            gpu = self._get_gpu_usage()
+            self.after(0, lambda: self._update_metrics_display(cpu, gpu))
+        
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(2000, self._update_system_metrics)
+    
+    def _update_metrics_display(self, cpu: Optional[float], gpu: Optional[float]) -> None:
+        """Update CPU and GPU display variables."""
+        try:
+            if cpu is not None:
+                self.cpu_var.set(f"{int(cpu)}%")
+            else:
+                self.cpu_var.set("--%%")
+            
+            if gpu is not None:
+                self.gpu_var.set(f"{int(gpu)}%")
+            else:
+                self.gpu_var.set("--%%")
+        except Exception:
+            pass
 
     def _newline(self, event):
         self.input.insert(tk.INSERT, "\n")
@@ -2071,55 +2152,6 @@ class JugiAIApp(tk.Tk):
         
         # Get or load the model using the model manager
         llm = _local_model_manager.get_model(cfg, self._safe_log)
-        
-        if not os.path.exists(model_path):
-            raise RuntimeError(
-                f"Paikallista mallia ei löydy: {model_path}\n"
-                "Tarkista polku asetuksista tai lataa malli uudelleen."
-            )
-        
-        # Validate it's a file, not a directory
-        if not os.path.isfile(model_path):
-            raise RuntimeError(
-                f"Virheellinen mallitiedosto: {model_path}\n"
-                "Polku on hakemisto, ei tiedosto."
-            )
-        
-        try:
-            from llama_cpp import Llama
-        except Exception as exc:
-            raise RuntimeError(_format_llama_import_error(exc)) from exc
-
-        if self.llm is None or self.llm_model_path != model_path:
-            self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
-            # Validate and get thread count
-            try:
-                requested_threads = int(cfg.get("local_threads", 0))
-            except (ValueError, TypeError):
-                requested_threads = 0  # Default to auto
-            validated_threads = self._validate_thread_count(requested_threads)
-            
-            # Determine GPU layers based on use_gpu setting
-            use_gpu = cfg.get("use_gpu", "cpu")
-            if use_gpu == "cpu":
-                n_gpu_layers = 0
-            elif use_gpu == "gpu":
-                n_gpu_layers = -1  # All layers to GPU
-            else:  # "both"
-                try:
-                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
-                except (ValueError, TypeError):
-                    n_gpu_layers = 0
-            
-            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
-            self.llm = Llama(
-                model_path=model_path,
-                n_threads=validated_threads,
-                n_gpu_layers=n_gpu_layers,
-                verbose=False,
-            )
-            self.llm_model_path = model_path
-            self._safe_log("Local model loaded successfully.")
 
         messages = self._build_messages_for_backend()
 
@@ -2127,6 +2159,9 @@ class JugiAIApp(tk.Tk):
             "messages": messages,
             "temperature": float(cfg.get("temperature", 0.7)),
             "top_p": float(cfg.get("top_p", 1.0)),
+            # Add repetition control parameters
+            "frequency_penalty": float(cfg.get("frequency_penalty", 0.0)),
+            "presence_penalty": float(cfg.get("presence_penalty", 0.0)),
         }
         
         # Use local_max_tokens if specified, otherwise use max_tokens
@@ -2157,11 +2192,14 @@ class JugiAIApp(tk.Tk):
             if not isinstance(max_tokens_fallback, int) or max_tokens_fallback <= 0:
                 max_tokens_fallback = 256
             
+            # Include repetition control in fallback mode too
             out = llm(
                 prompt=prompt,
                 temperature=float(cfg.get("temperature", 0.7)),
                 top_p=float(cfg.get("top_p", 1.0)),
                 max_tokens=max_tokens_fallback,
+                frequency_penalty=float(cfg.get("frequency_penalty", 0.0)),
+                presence_penalty=float(cfg.get("presence_penalty", 0.0)),
             )
             content = out.get("choices", [{}])[0].get("text", "")
         return content or ""
