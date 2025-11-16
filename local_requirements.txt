@@ -1,0 +1,39 @@
+# ============================================================================
+# AnomAI/JugiAI Local Model Support Requirements
+# ============================================================================
+#
+# This file contains the Python package dependency for local GGUF/LLM model
+# support via llama-cpp-python.
+#
+# INSTALLATION:
+# -------------
+# Option 1: Use the Python installation script (recommended):
+#   python install_tool_for_windows.py
+#
+# Option 2: Use pip directly from cmd.exe (not PowerShell):
+#   python -m pip install --upgrade --prefer-binary llama-cpp-python
+#
+# Option 3: Install from this file:
+#   python -m pip install -r local_requirements.txt --prefer-binary
+#
+# NOTES:
+# ------
+# - This installs CPU-only version by default
+# - For GPU acceleration (CUDA), see the GPU installation instructions below
+# - Requires Python 3.10+ (64-bit)
+# - May require Visual C++ Build Tools on Windows
+#
+# GPU INSTALLATION (CUDA):
+# ------------------------
+# For GPU-accelerated inference, use a CUDA-enabled wheel after installing
+# the base package:
+#
+#   python -m pip install llama-cpp-python --force-reinstall --no-cache-dir --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
+#
+# Or use the Python installation script with GPU support:
+#   python install_tool_for_windows.py --gpu
+#
+# ============================================================================
+
+# Local LLM support (CPU version, use --prefer-binary for precompiled wheels)
+llama-cpp-python
