@@ -264,6 +264,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "local_threads": 0,  # 0 = auto
     "use_gpu": "cpu",  # "cpu", "gpu", or "both"
     "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
+    # Advanced local model parameters
+    "local_n_ctx": 4096,  # Context window size
+    "local_n_batch": 256,  # Batch size for prompt processing
+    "local_gpu_layers": -1,  # GPU layers for LocalModelManager (-1 = auto)
+    "local_max_tokens": None,  # Max tokens for local model (None = use max_tokens)
+    "local_seed": None,  # Seed for reproducibility (None = random)
+    "local_rope_scale": None,  # RoPE frequency scaling (None = default)
+    "prefer_gpu": True,  # Prefer GPU when available
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
