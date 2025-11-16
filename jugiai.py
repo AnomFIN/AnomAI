@@ -148,8 +148,19 @@ def _format_llama_import_error(exc: Exception) -> str:
     lines.extend(
         [
             "",
-            "Suositeltu korjaus:",
-            f"  \"{python_hint}\" -m pip install --upgrade --prefer-binary llama-cpp-python",
+            "Suositellut asennustavat:",
+            "",
+            "1. Käytä asennusskriptiä (helpoin tapa, toimii kaikissa ympäristöissä):",
+            "   python install_tool_for_windows.py",
+            "",
+            "2. Asenna pip:llä käyttäen tiedostoa:",
+            "   python -m pip install -r local_requirements.txt --prefer-binary",
+            "",
+            "3. Asenna suoraan (käytä cmd.exe, EI PowerShell):",
+            f"   {python_hint} -m pip install --upgrade --prefer-binary llama-cpp-python",
+            "",
+            "Huom: PowerShell-käyttäjille suositellaan vaihtoehtoja 1 tai 2, koska",
+            "      PowerShell-syntaksi eroaa cmd.exe:stä.",
             "",
             f"Alkuperäinen virhe: {exc}",
         ]
@@ -502,8 +513,10 @@ class LocalModelManager:
                         f"GPU-kiihdytyksen käynnistys epäonnistui:\n{exc}\n\n"
                         "Malli on ladattu CPU-tilassa. Jos haluat käyttää GPU:ta, "
                         "varmista että sinulla on CUDA-tuella varustettu llama-cpp-python-versio.\n\n"
-                        "Asennus: pip install llama-cpp-python --prefer-binary\n"
-                        "tai CUDA-tuki: pip install llama-cpp-python --extra-index-url "
+                        "GPU-asennusvaihtoehdot:\n"
+                        "1. Käytä asennusskriptiä: python install_tool_for_windows.py --gpu\n"
+                        "2. Asenna manuaalisesti: python -m pip install llama-cpp-python "
+                        "--force-reinstall --no-cache-dir --extra-index-url "
                         "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121"
                     )
                 except Exception as cpu_exc:

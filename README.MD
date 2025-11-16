@@ -175,7 +175,10 @@ Sovellus toimii offline-tilassa seuraavissa tilanteissa:
 
 ### Paikallisen mallin käyttö
 
-1. **Asenna llama-cpp-python:** Asennusohjelma (`install.bat`) kysyy, haluatko asentaa paikallisen LLM-tuen
+1. **Asenna llama-cpp-python:** 
+   - Helpoin tapa: Aja `python install_tool_for_windows.py` (tai `python install_tool_for_windows.py --gpu` GPU-tuelle)
+   - Vaihtoehto: Asennusohjelma (`install.bat`) kysyy asennuksen yhteydessä
+   - Manuaalinen: `python -m pip install -r local_requirements.txt --prefer-binary`
 2. **Lataa .gguf-malli:** Lataa haluamasi malli (esim. LLaMA, Mistral, Phi-3) ja sijoita se `models`-hakemistoon
 3. **Valitse malli asetuksista:** Avaa asetukset (⚙️) ja valitse `backend: "local"` sekä määritä `local_model_path`
 4. **Käynnistä offline-tilassa:** Sovellus ilmoittaa konsolissa: "Running in offline mode — using local AI backend only."
