@@ -2,494 +2,497 @@
 
 ## Project Overview
 
-AnomAI/JugiAI is a **production-grade Windows AI desktop application** built with Python and packaged with PyInstaller. The application provides a Tkinter-based chat interface for OpenAI and local LLM models, designed to deliver an outstanding end-user experience as a standalone Windows executable.
+AnomAI/JugiAI is a Windows-native AI chat application built with Python and Tkinter. It provides a GUI interface for interacting with OpenAI APIs and local LLM models (via llama-cpp-python).
 
-## Core Architecture Principles
+**Key Features:**
+- Tkinter-based GUI with modern cyber-neon theme
+- Support for OpenAI API and local GGUF models
+- Conversation history with playback features
+- Profile management and customizable settings
+- PyInstaller-based Windows executable generation
+- UTF-8 safe installation scripts for Windows
 
-### 1. PyInstaller Compatibility - CRITICAL
+## Core Principles (MUST FOLLOW)
 
-**Always prioritize PyInstaller compatibility in every code change:**
+### 1. Visual Design Excellence
+- **Consistency is King**: Design the UI to be as clear, stylish, and cohesive as possible
+- **Unified Color Scheme**: Use a consistent color palette throughout the application
+- **Typography**: Maintain consistent font families, sizes, and weights - avoid visual noise
+- **Accessibility**: Always consider accessibility (e.g., contrast ratios, text sizes)
+- **Current Theme**: The application uses a cyber-neon theme with dark backgrounds and bright accent colors
 
-- **Avoid dynamic imports**: Never use `__import__()`, `importlib.import_module()` with runtime-determined module names, or dynamic `exec()`/`eval()` for imports
-- **Use explicit imports**: All imports must be at the top of files or in clearly defined functions with static import statements
-- **Hidden imports**: When adding new dependencies, check if they require PyInstaller hidden imports and document them
-- **Module discovery**: Structure code so PyInstaller can statically analyze all dependencies
-- **Test packaging**: After significant changes, verify the code still packages correctly with PyInstaller
+### 2. Error Resilience (CRITICAL)
+- **Never Crash**: The application MUST NOT crash in exceptional situations!
+- **Comprehensive Error Handling**: Wrap all potentially failing code in try/except blocks
+- **User-Friendly Messages**: Provide friendly error messages in Finnish with suggested corrective actions
+- **Debug Logging**: Log exceptions for debugging purposes, but NEVER show raw tracebacks to users
+- **Graceful Degradation**: When features fail, the application should continue functioning with reduced capability
 
-**Example - GOOD:**
-```python
-try:
-    from PIL import Image, ImageTk
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
+### 3. Repository Hygiene
+- **No Temporary Files**: Never commit unnecessary/temporary files (*.pyc, *.tmp, .DS_Store, etc.)
+- **Use .gitignore**: Add rules to prevent accidental commits of build artifacts, dependencies, and temporary files
+- **Clean Commits**: Only commit intentional changes that are part of the feature or fix
+
+## Project Structure
+
+The repository follows a logical, clear structure:
+
+```
+AnomAI/
+├── jugiai.py                    # Main application (Tkinter GUI)
+├── playback_utils.py            # Playback and font utilities
+├── demo_camera_feature.py       # Camera feature demonstration
+├── make_ico.py                  # Icon generation utility
+├── install.bat                  # Main installation script
+├── install_utf8.bat             # UTF-8 wrapper for install.bat
+├── build_exe.bat                # PyInstaller build script
+├── start_jugiai.bat             # Application launcher
+├── requirements.txt             # Python dependencies
+├── config.json                  # User configuration (auto-generated, gitignored)
+├── history.json                 # Chat history (auto-generated)
+├── tests/                       # Unit tests (comprehensive coverage)
+│   ├── test_offline_mode.py
+│   ├── test_playback_utils.py
+│   ├── test_model_formatting.py
+│   ├── test_error_messages.py
+│   ├── test_thread_validation.py
+│   └── ...
+├── scripts/                     # Helper scripts
+│   └── verify-win-env.bat
+├── .github/
+│   ├── copilot-instructions.md  # This file
+│   └── workflows/               # CI/CD workflows
+│       ├── build-windows.yml
+│       ├── lint.yml
+│       └── windows-pyinstaller.yml
+└── docs/                        # Documentation (markdown files)
+    ├── CAMERA_FEATURE.md
+    ├── LOCAL_MODEL_GUIDE.md
+    └── ...
 ```
 
-**Example - BAD:**
-```python
-# DO NOT DO THIS - dynamic import breaks PyInstaller
-module_name = "PIL.Image"
-PIL = __import__(module_name)
-```
+**Folder Organization Principles:**
+- **Root**: Main application files and entry points
+- **tests/**: All unit tests, one file per feature/module
+- **scripts/**: Helper scripts for development and deployment
+- **docs/**: Markdown documentation (feature guides, implementation notes)
+- **.github/**: GitHub-specific files (workflows, Copilot instructions)
+- **Build artifacts**: Excluded via .gitignore (dist/, build/, .venv/, *.pyc, etc.)
 
-### 2. Dependency Management
+## Technology Stack
 
-**Python Version:**
-- Minimum: Python 3.10 (64-bit)
-- Test compatibility with Python 3.10, 3.11, and 3.12
-- Use `from __future__ import annotations` for forward compatibility
+- **Language:** Python 3.10+ (64-bit required for PyInstaller)
+- **GUI Framework:** Tkinter (standard library)
+- **HTTP Client:** urllib (standard library)
+- **Optional Dependencies:**
+  - Pillow (>=8.0.0) - Image processing
+  - llama-cpp-python - Local LLM support (installed separately)
+- **Build Tool:** PyInstaller (for .exe generation)
+- **Testing:** unittest (standard library)
 
-**Required Dependencies:**
-- Keep dependencies minimal - prefer Python standard library
-- `tkinter`: GUI framework (included with Python on Windows)
-- `pillow>=8.0.0`: Optional but recommended for image handling
+## Development Guidelines
 
-**Optional Dependencies:**
-- `llama-cpp-python`: For local GGUF models (requires special pip installation: `pip install --upgrade --prefer-binary llama-cpp-python`)
-- Handle optional dependencies gracefully with try/except and feature flags
+### Code Style
 
-**When adding new dependencies:**
-1. Check if they're compatible with PyInstaller
-2. Verify they support Python 3.10+
-3. Test on Windows 64-bit
-4. Update `requirements.txt` with version constraints
-5. Document any special installation requirements
+1. **Encoding:** All Python files use UTF-8 with BOM-free encoding
+2. **Batch Scripts:** Windows batch files (.bat, .cmd) must be:
+   - UTF-8 encoded without BOM
+   - Use CRLF line endings (required for Windows)
+   - Validated by lint.yml workflow
+3. **Documentation:** Finnish language for user-facing docs, English for code comments
+4. **Type Hints:** Use modern Python type hints (from `__future__ import annotations`)
+5. **Code Formatting:** Follow PEP 8 style guidelines, use linters (flake8, black if added)
+6. **Comments:** Only add comments when necessary to explain complex logic, not obvious code
 
-### 3. Code Quality Standards
+### Coding Patterns
 
-**Error Handling:**
-- Never use bare `except:` clauses - always catch specific exceptions
-- Provide clear, actionable error messages in JSON format where appropriate
-- Log errors to `jugiai_error.log` with full tracebacks
-- Handle network failures gracefully (API timeouts, connection errors)
-- Validate user inputs before processing
+1. **Configuration Management:**
+   - Use JSON for config files (config.json, history.json)
+   - Always write with UTF-8 encoding: `json.dump(..., ensure_ascii=False)`
+   - Provide sensible defaults for missing settings
 
-**Example - GOOD:**
-```python
-try:
-    response = urllib.request.urlopen(request, timeout=30)
-except urllib.error.HTTPError as e:
-    logger.error(f"HTTP error: {e.code} - {e.reason}")
-    show_user_error(f"API request failed: {e.reason}")
-except urllib.error.URLError as e:
-    logger.error(f"Connection error: {e.reason}")
-    show_user_error("Cannot connect to API. Check your internet connection.")
-```
+2. **Error Handling (CRITICAL):**
+   - **NEVER allow the application to crash** - wrap all risky operations in try/except
+   - Provide user-friendly error messages in Finnish with suggested corrective actions
+   - Log full tracebacks to `jugiai_error.log` for debugging
+   - Example pattern:
+   ```python
+   try:
+       risky_operation()
+   except SpecificError as e:
+       log_error(f"Error details: {e}")
+       show_user_message("Ystävällinen virheviesti käyttäjälle")
+       # Continue gracefully or provide alternative
+   ```
+   - Gracefully degrade for missing optional dependencies (PIL, llama-cpp-python)
 
-**Example - BAD:**
-```python
-try:
-    response = urllib.request.urlopen(request)
-except:  # BAD - catches everything, no user feedback
-    pass
-```
+3. **Threading:**
+   - Use threading for API calls to prevent GUI freezing
+   - Validate thread counts against CPU limits
+   - See `test_thread_validation.py` for patterns
 
-**Logging:**
-- Use descriptive log messages with context
-- Include timestamps for debugging
-- Support JSON-formatted logs for structured logging
-- Log to both console and file where appropriate
+4. **Offline Mode:**
+   - Detect offline mode via: explicit flag, local backend, or missing API key
+   - Prevent API calls when offline
+   - See `test_offline_mode.py` for implementation
 
-**Input Validation:**
-- Validate all user inputs (API keys, file paths, configuration values)
-- Check file paths exist before using them
-- Validate JSON configuration before loading
-- Sanitize inputs to prevent injection issues
+### Testing
 
-### 4. Code Structure
+**CRITICAL RULE: Never push broken code!**
+- All changes MUST be tested before committing
+- Tests MUST pass before pushing
+- Write new tests for new functionality
 
-**Modularity:**
-- Keep functions focused and single-purpose
-- Extract reusable logic into utility modules (see `playback_utils.py`)
-- Use type hints for function signatures
-- Document complex logic with clear comments
-
-**File Organization:**
-- Main application: `jugiai.py`
-- Utility modules: Separate files for reusable logic
-- Tests: Mirror source structure in `tests/` directory
-- Configuration: JSON files with UTF-8 encoding
-
-**Naming Conventions:**
-- Functions: `snake_case`
-- Classes: `PascalCase`
-- Constants: `UPPER_SNAKE_CASE`
-- Private methods: Prefix with `_`
-
-### 5. Windows-Specific Considerations
-
-**File Paths:**
-- Use `os.path.join()` or `pathlib.Path` for cross-platform compatibility
-- Handle Windows paths with spaces and special characters
-- Use absolute paths resolved from `__file__` for resources
-
-**Character Encoding:**
-- Always use UTF-8 encoding for file I/O: `open(file, 'r', encoding='utf-8')`
-- Batch scripts (.bat files) should set console encoding to UTF-8 at the top: `chcp 65001 >nul`
-- Handle BOM correctly in batch scripts (avoid it - use UTF-8 without BOM)
-- Test with non-ASCII characters (ääkköset)
-
-**Line Endings:**
-- Batch files (`.bat`, `.cmd`): Use CRLF (`\r\n`)
-- Python files: Use LF (`\n`)
-- Configure `.gitattributes` to enforce correct line endings
-
-**Example:**
-```python
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-
-def load_config() -> dict:
-    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def save_config(config: dict) -> None:
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-```
-
-### 6. UI/UX Requirements
-
-**User Experience:**
-- Fast startup time (minimize imports and initialization)
-- Responsive UI (use threading for long-running operations)
-- Clear visual feedback for actions (loading indicators, status messages)
-- Graceful degradation when optional features unavailable
-- Consistent theming following the cyber-neon dark theme
-
-**GUI Best Practices:**
-- Keep UI responsive - never block the main thread
-- Use `threading` for API calls and long operations
-- Update UI from main thread only (use `after()` for thread-safe updates)
-- Provide progress indicators for long operations
-- Handle window close events cleanly
-
-**Example:**
-```python
-def send_message_async(self):
-    """Send message in background thread to keep UI responsive."""
-    def _send():
-        try:
-            response = self.call_api(self.message_text)
-            # Update UI from main thread
-            self.root.after(0, lambda: self.display_response(response))
-        except Exception as e:
-            self.root.after(0, lambda: self.show_error(str(e)))
-    
-    thread = threading.Thread(target=_send, daemon=True)
-    thread.start()
-```
-
-**Accessibility:**
-- Support font size adjustment (zoom in/out)
-- Use clear, high-contrast colors
-- Provide keyboard shortcuts for common actions
-- Ensure all UI elements have proper labels
-
-### 7. Testing Requirements
-
-**Test Coverage:**
-- Write unit tests for all utility functions
-- Test error handling paths
-- Test edge cases (empty inputs, None values, invalid data)
-- Test Windows-specific code paths where possible
-
-**Test Structure:**
-- Place tests in `tests/` directory
-- Name test files: `test_<module_name>.py`
-- Use `unittest` framework (already in use)
-- Mock external dependencies (API calls, file I/O when appropriate)
-
-**Running Tests:**
+**Run Tests:**
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-**Example Test:**
-```python
-import unittest
-from playback_utils import clamp_font_size, MIN_FONT_SIZE, MAX_FONT_SIZE
+**Test Organization:**
+- Unit tests in `tests/` directory
+- One test file per feature/module
+- Use descriptive test names and docstrings
+- Mock external dependencies (API calls, file I/O)
+- Ensure tests are independent and can run in any order
 
-class TestFontSizing(unittest.TestCase):
-    def test_increase_within_bounds(self):
-        """Test that font size increases correctly within bounds."""
-        self.assertEqual(clamp_font_size(12, 2), 14)
-    
-    def test_upper_bound(self):
-        """Test that font size doesn't exceed maximum."""
-        self.assertEqual(clamp_font_size(MAX_FONT_SIZE, 1), MAX_FONT_SIZE)
-    
-    def test_decrease_with_lower_bound(self):
-        """Test that font size doesn't go below minimum."""
-        self.assertEqual(clamp_font_size(MIN_FONT_SIZE, -1), MIN_FONT_SIZE)
-```
+**CI/CD:**
+- All tests run on push/PR via GitHub Actions
+- Windows-specific testing environment
+- Lint checks for encoding and line endings
+- Build verification for PyInstaller
 
-### 8. Build and Packaging
+**Test Coverage:**
+- Aim for comprehensive coverage of new features
+- Test error paths and edge cases
+- Verify error handling with appropriate exceptions
 
-**PyInstaller Configuration:**
-- One-file mode for easy distribution: `--onefile`
-- Include icon: `--icon=logo.ico`
-- Add hidden imports when needed: `--hidden-import=<module>`
-- Handle data files: Use `--add-data` for resources
-- Test the built executable thoroughly
+### Building
 
-**Build Process:**
-1. Validate Python version (3.10+, 64-bit)
-2. Create clean virtual environment
-3. Install dependencies from `requirements.txt`
-4. Generate icon from PNG: `make_ico.py`
-5. Run PyInstaller with proper flags
-6. Test the resulting `.exe`
-7. Create distribution package
-
-**Build Scripts:**
-- `build_exe.bat`: Automated build with logging
-- `install.bat`: Complete setup for end users
-- Both scripts include error handling and user feedback
-
-**Build Validation:**
+**Development Build:**
 ```bash
-# After building, always test:
-.\dist\AnomAI\AnomAI.exe  # Test the executable in dist directory
-# Check for missing dependencies in error logs
-# Verify all features work in the packaged version
+python jugiai.py
 ```
 
-### 9. Configuration Management
-
-**Configuration Files:**
-- `config.json`: Application settings (UTF-8 encoded)
-- `history.json`: Chat history (UTF-8 encoded)
-- Always include `ensure_ascii=False` when writing JSON
-- Validate configuration before using values
-- Provide sensible defaults for missing keys
-
-**Configuration Structure:**
-```python
-DEFAULT_CONFIG = {
-    "openai_api_key": "",
-    "openai_model": "gpt-4o-mini",
-    "system_prompt": "You are a helpful assistant.",
-    "temperature": 0.7,
-    "max_tokens": 2048,
-    # ... more settings
-}
-
-def get_config_value(key: str, default: Any = None) -> Any:
-    """Safely get configuration value with fallback."""
-    config = load_config()
-    return config.get(key, default)
+**Production Build:**
+```bash
+build_exe.bat
 ```
+This creates:
+- `dist\AnomAI\AnomAI.exe` - Standalone executable
+- `AnomAI_Windows.zip` - Distribution package
+- `build_exe.log` - Build log
 
-### 10. Security Best Practices
+**Installation:**
+```bash
+install.bat
+```
+Performs full setup:
+1. Creates virtual environment (.venv)
+2. Installs dependencies
+3. Configures application
+4. Builds executable
+5. Creates desktop shortcut
 
-**API Keys:**
-- Never hardcode API keys in source code
-- Store in configuration files (excluded from git)
-- Prompt user for keys on first run
-- Validate key format before using
-- Clear from memory when possible
+### Important Constraints
 
-**Input Validation:**
-- Validate all file paths to prevent directory traversal
-- Sanitize user inputs before using in system calls
-- Validate JSON structure before loading
-- Check file sizes before reading
+1. **Windows Focus:** This is a Windows-native application
+   - Use Windows path conventions (backslash)
+   - Test on Windows environment
+   - Batch scripts must use CRLF line endings
 
-**Dependency Security:**
-- Keep dependencies updated
-- Review dependency changes for security issues
-- Use version pinning in `requirements.txt`
-- Avoid dependencies with known vulnerabilities
+2. **Minimal Dependencies:** Prefer standard library
+   - Core features work without external packages
+   - Optional features gracefully degrade
+   - Check compatibility before adding dependencies
 
-## Common Patterns and Anti-Patterns
+3. **UTF-8 Safety:** Windows console encoding is fragile
+   - Use UTF-8 without BOM for all text files
+   - Batch scripts handle codepage switching
+   - JSON files use `ensure_ascii=False`
 
-### ✅ DO:
+4. **PyInstaller Compatibility:**
+   - Avoid dynamic imports when possible
+   - Bundle data files explicitly in .spec
+   - Test .exe builds before release
+
+5. **Library Compatibility (CRITICAL):**
+   - Ensure all library versions work together (use `pip check`)
+   - Update `requirements.txt` when adding or updating dependencies
+   - Document WHY a dependency update was necessary
+   - Test the entire application after dependency changes
+
+## Common Tasks
+
+### Adding a New Feature
+
+1. **Create a feature branch** - ALWAYS work on a separate branch
+2. Implement in `jugiai.py` or separate module
+3. Add comprehensive unit tests in `tests/test_<feature>.py`
+4. Ensure error handling with try/except blocks
+5. Test both success and failure scenarios
+6. Update README.MD if user-facing
+7. Test with both Python and .exe versions
+8. Ensure offline mode compatibility if applicable
+9. Run linters and ensure code quality
+10. Verify all tests pass before committing
+
+### Fixing a Bug
+
+1. **Create a bugfix branch** - ALWAYS work on a separate branch
+2. Add failing test that reproduces the bug
+3. Fix the bug with minimal changes
+4. Ensure proper error handling
+5. Verify test passes
+6. Check for regressions in related features
+7. Write clear, descriptive commit message in English
+
+### Updating Dependencies
+
+1. Check compatibility with existing dependencies (`pip check`)
+2. Update `requirements.txt`
+3. Document the reason for the update in commit message
+4. Test installation with `install.bat`
+5. Verify .exe build with `build_exe.bat`
+6. Run full test suite
+7. Update README.MD if needed
+
+### Modifying Batch Scripts
+
+1. Use UTF-8 encoding without BOM
+2. Ensure CRLF line endings
+3. Test on Windows command prompt
+4. Verify lint checks pass
+5. Add error handling for user-friendly output
+6. Include informative error messages in Finnish
+7. Use `:maybe_pause` function to keep window open on errors
+
+### Working with UI/Visual Design
+
+1. **Consistency First**: Follow existing color scheme and typography
+2. **Color Palette**: Use the cyber-neon theme (dark backgrounds, bright accents)
+3. **Typography**: Maintain consistent font sizes and families
+4. **Accessibility**: Ensure good contrast ratios (WCAG AA minimum)
+5. **User Experience**: Keep UI clean and uncluttered
+6. **Test Visually**: Always verify visual changes match the application's style
+
+## Security Considerations
+
+1. **API Keys:** Never commit API keys to version control
+   - Store in config.json (gitignored)
+   - Prompt user during installation
+   - Validate before use
+
+2. **User Input:** Sanitize file paths and user inputs
+   - Use os.path operations for path handling
+   - Validate model file paths before loading
+
+3. **Dependencies:** Keep dependencies minimal and updated
+   - Check for vulnerabilities before adding
+   - Use `--prefer-binary` for llama-cpp-python
+
+## Error Handling Patterns (CRITICAL)
+
+### Required Pattern for All Risky Operations
+
+**NEVER let the application crash!** All potentially failing operations must be wrapped in try/except blocks:
 
 ```python
-# Use explicit imports
-import json
-import os
-from typing import Optional
+import logging
 
-# Handle optional dependencies gracefully
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
+# Setup logging
+logging.basicConfig(filename='jugiai_error.log', level=logging.ERROR)
 
-# Use type hints
-def process_message(text: str, config: dict) -> Optional[str]:
-    """Process user message with proper typing."""
-    if not text.strip():
+def risky_operation():
+    try:
+        # Code that might fail
+        result = potentially_failing_function()
+        return result
+    except FileNotFoundError as e:
+        logging.error(f"File not found: {e}", exc_info=True)
+        show_error_dialog("Tiedostoa ei löytynyt", 
+                         "Tarkista tiedostopolku ja yritä uudelleen.")
         return None
-    # ... processing
-    return result
-
-# Provide clear error messages
-except FileNotFoundError as e:
-    messagebox.showerror(
-        "File Not Found",
-        f"Could not find configuration file: {config_path}\n\n"
-        f"Please run install.bat to set up the application."
-    )
-
-# Use context managers for file operations
-with open(file_path, 'r', encoding='utf-8') as f:
-    data = json.load(f)
+    except PermissionError as e:
+        logging.error(f"Permission denied: {e}", exc_info=True)
+        show_error_dialog("Käyttöoikeus evätty",
+                         "Varmista että sinulla on oikeudet tiedostoon.")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}", exc_info=True)
+        show_error_dialog("Odottamaton virhe",
+                         "Katso jugiai_error.log lisätiedoista.")
+        return None
 ```
 
-### ❌ DON'T:
+### Error Message Guidelines
 
+1. **In Finnish**: All user-facing error messages must be in Finnish
+2. **Friendly Tone**: Use polite, helpful language
+3. **Actionable**: Always suggest what the user can do to fix the issue
+4. **No Technical Jargon**: Avoid raw exceptions or technical details for users
+5. **Log Everything**: Log full technical details to jugiai_error.log
+
+### Examples of Good Error Messages
+
+**Bad** (don't do this):
 ```python
-# DON'T use dynamic imports
-module = __import__(f"modules.{module_name}")  # BAD
+raise Exception("API call failed")
+```
 
-# DON'T use bare except
+**Good** (do this):
+```python
 try:
-    risky_operation()
-except:  # BAD - catches everything including KeyboardInterrupt
-    pass
-
-# DON'T block the UI thread
-def button_click():
-    result = slow_api_call()  # BAD - freezes UI
-    display_result(result)
-
-# DON'T ignore encoding
-with open(file, 'r') as f:  # BAD - uses system encoding
-    data = f.read()
-
-# DON'T use relative imports for resources
-file = open("../config.json")  # BAD - breaks when packaged
+    response = api_call()
+except requests.RequestException as e:
+    logging.error(f"API call failed: {e}", exc_info=True)
+    show_error_dialog(
+        "Yhteysvirhe",
+        "API-kutsu epäonnistui. Tarkista internet-yhteytesi ja yritä uudelleen."
+    )
 ```
 
-## Git Workflow
+## Performance Tips
 
-**Commit Messages:**
-- Use clear, descriptive commit messages
+1. **GUI Responsiveness:**
+   - Use threads for long-running operations
+   - Update GUI from main thread only
+   - Show loading indicators for API calls
+
+2. **Memory Management:**
+   - Clear history when it grows large
+   - Unload images when not needed
+   - Limit conversation context size
+
+3. **Build Optimization:**
+   - Use PyInstaller's `--onefile` for distribution
+   - Exclude unnecessary modules with `--exclude-module`
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"No module named 'tkinter'"**
+   - tkinter is not available in headless environments
+   - Tests that import jugiai.py will fail in CI without display
+   - Solution: Mock tkinter in tests or skip GUI tests
+
+2. **UTF-8 Encoding Errors**
+   - Ensure batch files are UTF-8 without BOM
+   - Use `chcp 65001` before running scripts
+   - install_utf8.bat handles this automatically
+
+3. **PyInstaller Build Failures**
+   - Check Python is 64-bit and version 3.10+
+   - Install Visual C++ Build Tools for llama-cpp-python
+   - Review build_exe.log for details
+
+4. **Offline Mode Not Working**
+   - Verify `offline_mode: true` in config.json
+   - Check local_model_path points to .gguf file
+   - Ensure llama-cpp-python is installed
+
+## Best Practices for Copilot
+
+1. **When suggesting code changes:**
+   - Preserve existing code style and patterns
+   - Maintain UTF-8 encoding without BOM
+   - Keep changes minimal and focused
+   - Add tests for new functionality
+   - **ALWAYS wrap risky operations in try/except blocks**
+   - Never commit broken code
+
+2. **When working with batch files:**
+   - Always use CRLF line endings
+   - Follow existing error handling patterns
+   - Include informative error messages in Finnish
+   - Test on Windows environment
+
+3. **When adding features:**
+   - **Create a feature branch first**
+   - Check if similar functionality exists
+   - Ensure Windows compatibility
+   - Test both Python and .exe versions
+   - Update documentation
+   - Add comprehensive error handling
+   - Write clear, descriptive commit messages in English
+
+4. **When fixing bugs:**
+   - **Create a bugfix branch first**
+   - Reproduce with a test first
+   - Verify fix doesn't break offline mode
+   - Check impact on PyInstaller build
+   - Test with different configurations
+   - Ensure proper error handling
+
+5. **General Workflow:**
+   - **Always use branches** - never commit directly to main
+   - Write clear, descriptive commit messages in English
+   - Test thoroughly before committing
+   - Run linters and fix issues
+   - Verify all tests pass
+   - Document architectural decisions
+   - Check library compatibility with `pip check`
+
+## Resources
+
+- **Repository:** https://github.com/AnomFIN/AnomAI
+- **Documentation:** README.MD (Finnish)
+- **Issue Tracker:** GitHub Issues
+- **CI/CD:** GitHub Actions workflows in .github/workflows/
+
+## Notes
+
+- This project uses Finnish for user-facing content
+- Focus on Windows compatibility
+- Prioritize offline mode functionality
+- Maintain backward compatibility with existing configs
+
+## Summary: Golden Rules for AnomAI/JugiAI Development
+
+### 🚨 CRITICAL (Never Violate)
+1. **Never push broken code** - all tests must pass
+2. **Never let the app crash** - always use try/except with friendly error messages in Finnish
+3. **Always use branches** - never commit directly to main
+4. **Always test before committing** - verify functionality and run test suite
+
+### 🎨 Design Principles
+1. Keep UI clean, stylish, and consistent with cyber-neon theme
+2. Maintain unified color scheme and typography
+3. Consider accessibility (contrast, text size)
+4. Avoid visual noise and clutter
+
+### 📁 Repository Hygiene
+1. Never commit temporary files (*.pyc, *.tmp, .DS_Store, etc.)
+2. Use .gitignore to prevent accidental commits
+3. Keep folder structure logical and documented
+4. Only commit intentional, reviewed changes
+
+### 💻 Code Quality
+1. Write comprehensive tests for all new features
+2. Use linters and follow PEP 8
+3. Add comments only when necessary
+4. Log errors to jugiai_error.log, show friendly messages to users
+5. Ensure library compatibility with `pip check`
+
+### 🔄 Workflow
+1. Create feature/bugfix branch
+2. Make minimal, focused changes
+3. Write/update tests
+4. Run tests and linters
+5. Write clear commit message in English
+6. Document architectural decisions
+7. Verify .exe build if applicable
+
+### 📝 Commit Messages
+- Write in English
+- Be descriptive and clear
+- Follow format: "Add feature X" or "Fix bug in Y"
 - Reference issue numbers when applicable
-- Use conventional commit format when appropriate
 
-**Branch Strategy:**
-- Feature branches: `feature/brief-description` (e.g., `feature/add-voice-recording`)
-- Bug fixes: `fix/issue-number-description` (e.g., `fix/42-api-timeout`)
-- Copilot branches: `copilot/improvement-description` (e.g., `copilot/setup-copilot-instructions`)
+### 🤝 When in Doubt
+- Check existing code patterns
+- Look at similar features for reference
+- Ask via GitHub Issues if unclear
+- Prefer conservative, minimal changes
 
-**Pre-Commit Checks:**
-- Run tests: `python -m unittest discover -s tests`
-- Check code format
-- Verify batch file encodings (UTF-8 without BOM, CRLF line endings)
-
-## Continuous Integration
-
-The project uses GitHub Actions for CI:
-
-- **Linting** (`lint.yml`): Validates batch file encodings and line endings
-- **PyInstaller Build** (`windows-pyinstaller.yml`): Builds Windows executable
-- **Windows Build** (`build-windows.yml`): Full build and test workflow
-
-**When adding new workflows:**
-- Test on `windows-latest` runner
-- Cache pip dependencies for faster builds
-- Upload artifacts for testing
-- Include proper error handling
-
-## Documentation Standards
-
-**Code Comments:**
-- Document complex algorithms and business logic
-- Explain "why" not "what" for non-obvious code
-- Use docstrings for all public functions and classes
-- Keep comments up-to-date with code changes
-
-**Docstring Format:**
-```python
-def calculate_tokens(text: str, model: str) -> int:
-    """
-    Calculate approximate token count for text.
-    
-    Args:
-        text: Input text to tokenize
-        model: Model name to determine tokenization rules
-        
-    Returns:
-        Approximate number of tokens
-        
-    Raises:
-        ValueError: If model is not supported
-    """
-    # Implementation
-```
-
-**README Updates:**
-- Keep installation instructions current
-- Document new features and configuration options
-- Include troubleshooting for common issues
-- Maintain examples in Finnish (project language)
-
-## Performance Optimization
-
-**Startup Time:**
-- Lazy-load heavy dependencies (PIL, llama-cpp-python)
-- Defer UI initialization until needed
-- Cache configuration in memory
-- Minimize file I/O during startup
-
-**Runtime Performance:**
-- Use appropriate data structures
-- Cache computed values when beneficial
-- Profile before optimizing
-- Test memory usage with PyInstaller executable
-
-**Example:**
-```python
-# Lazy load PIL only when needed
-_pil_image_cache = None
-
-def get_pil_image():
-    global _pil_image_cache
-    if _pil_image_cache is None and PIL_AVAILABLE:
-        from PIL import Image
-        _pil_image_cache = Image
-    return _pil_image_cache
-```
-
-## Localization
-
-**Language:**
-- Primary language: Finnish (Finnish documentation and UI)
-- Code comments: Can be in English or Finnish
-- Error messages: User-facing messages in Finnish
-- Variable names: English for consistency
-
-**Encoding:**
-- All text files: UTF-8 encoding
-- Support non-ASCII characters throughout
-- Test with Finnish characters (ä, ö, å, etc.)
-
-## Summary Checklist
-
-Before submitting code, verify:
-
-- [ ] Code is PyInstaller-compatible (no dynamic imports)
-- [ ] All imports are explicit and at the top of files
-- [ ] Error handling is specific with clear user messages
-- [ ] File operations use UTF-8 encoding
-- [ ] File paths use `os.path.join()` or `pathlib`
-- [ ] Long operations run in background threads
-- [ ] UI updates happen on main thread only
-- [ ] Type hints are used for function signatures
-- [ ] Unit tests cover new functionality
-- [ ] Tests pass: `python -m unittest discover -s tests`
-- [ ] Configuration changes are backward-compatible
-- [ ] New dependencies are documented and justified
-- [ ] Code follows existing patterns and style
-- [ ] Documentation is updated as needed
-- [ ] Windows batch files (e.g., `build_exe.bat`, `install.bat`) use UTF-8 encoding without BOM and CRLF line endings (project requirement)
-
----
-
-**Remember:** This is a production application distributed to end users. Every change should prioritize stability, user experience, and maintainability. When in doubt, choose the approach that makes the PyInstaller build more reliable and the user experience more robust.
-
-**Project Signature:** AnomFIN · Intelligent Experiences
+Remember: **Quality over speed. A working, tested feature is better than a rushed, broken one.**
