@@ -50,7 +50,7 @@ if not defined PY_CMD (
   echo.
   echo 3. After installation, close this window and run install.bat again.
   echo.
-  set /p OPEN_BROWSER=Would you like to open the Python download page now? [Y/N] (default Y): 
+  set /p OPEN_BROWSER=Would you like to open the Python download page now? [Y/N] (default Y). 
   if /I "!OPEN_BROWSER!"=="" set "OPEN_BROWSER=Y"
   if /I "!OPEN_BROWSER!"=="Y" (
     echo Opening browser...
@@ -242,7 +242,7 @@ echo GPU installation example (after this script):
 echo   python -m pip install llama-cpp-python --extra-index-url https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121
 echo.
 set "INSTALL_LLAMA="
-set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y): 
+set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y). 
 if /I "!INSTALL_LLAMA!"=="" set "INSTALL_LLAMA=Y"
 if /I "!INSTALL_LLAMA!"=="N" (
   echo Skipping llama-cpp-python installation at user request.
@@ -277,7 +277,7 @@ echo.
 REM Check if config.json already exists
 if exist config.json (
   echo [OK] Configuration file already exists: config.json
-  set /p RECONFIG=Would you like to reconfigure? [Y/N] (default N): 
+  set /p RECONFIG=Would you like to reconfigure? [Y/N] (default N). 
   if /I "!RECONFIG!"=="" set "RECONFIG=N"
   if /I "!RECONFIG!"=="N" (
     echo [SKIP] Keeping existing configuration
@@ -292,22 +292,22 @@ echo.
 
 REM Get API Key
 set "API_KEY="
-set /p API_KEY=OpenAI API Key (leave empty if using local models only): 
+set /p API_KEY=OpenAI API Key (leave empty if using local models only). 
 if not defined API_KEY set "API_KEY="
 
 REM Get Model
 set "MODEL=gpt-4o-mini"
-set /p MODEL=OpenAI Model [gpt-4o-mini]: 
+set /p MODEL=OpenAI Model [gpt-4o-mini]. 
 if "!MODEL!"=="" set "MODEL=gpt-4o-mini"
 
 REM Get Temperature
 set "TEMPERATURE=0.7"
-set /p TEMPERATURE=Temperature (0.0-2.0) [0.7]: 
+set /p TEMPERATURE=Temperature (0.0-2.0) [0.7]. 
 if "!TEMPERATURE!"=="" set "TEMPERATURE=0.7"
 
 REM Get Max Tokens
 set "MAX_TOKENS=4000"
-set /p MAX_TOKENS=Max Tokens [4000]: 
+set /p MAX_TOKENS=Max Tokens [4000]. 
 if "!MAX_TOKENS!"=="" set "MAX_TOKENS=4000"
 
 REM Create config.json using a temporary Python script for proper JSON encoding
@@ -371,7 +371,7 @@ echo This allows you to run AnomAI without activating the virtual environment.
 echo.
 
 set "BUILD_EXE="
-set /p BUILD_EXE=Build AnomAI.exe? [Y/N] (default Y): 
+set /p BUILD_EXE=Build AnomAI.exe? [Y/N] (default Y). 
 if /I "!BUILD_EXE!"=="" set "BUILD_EXE=Y"
 if /I "!BUILD_EXE!"=="N" (
   echo [SKIP] Skipping EXE build at user request.
@@ -428,7 +428,7 @@ echo ============================================
 echo.
 
 set "CREATE_SHORTCUT="
-set /p CREATE_SHORTCUT=Create desktop shortcut? [Y/N] (default Y): 
+set /p CREATE_SHORTCUT=Create desktop shortcut? [Y/N] (default Y). 
 if /I "!CREATE_SHORTCUT!"=="" set "CREATE_SHORTCUT=Y"
 if /I "!CREATE_SHORTCUT!"=="N" (
   echo [SKIP] Skipping desktop shortcut creation.

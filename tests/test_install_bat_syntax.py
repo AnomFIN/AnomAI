@@ -294,6 +294,31 @@ class TestInstallBatSyntax(unittest.TestCase):
             "Script should validate 64-bit Python architecture"
         )
 
+    def test_set_p_prompts_no_trailing_colons(self):
+        """Test that set /p prompts don't have trailing colons.
+        
+        Trailing colons in set /p prompts can cause syntax errors
+        with enabledelayedexpansion because colons are interpreted
+        as label markers. This test ensures all prompts end with
+        periods or other safe punctuation instead.
+        """
+        problematic_lines = []
+        for i, line in enumerate(self.lines, 1):
+            # Check for set /p commands
+            if re.search(r'set\s+/p\s+\w+=', line, re.IGNORECASE):
+                # Check if the line ends with a colon followed by optional whitespace
+                if re.search(r':\s*$', line):
+                    problematic_lines.append((i, line.strip()))
+        
+        self.assertEqual(
+            len(problematic_lines), 0,
+            f"Found {len(problematic_lines)} set /p command(s) with trailing colons. "
+            f"These can cause syntax errors with enabledelayedexpansion. "
+            f"Replace trailing colons with periods or other punctuation.\n"
+            f"Problematic lines:\n" + 
+            "\n".join(f"  Line {num}: {line}" for num, line in problematic_lines)
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
