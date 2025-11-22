@@ -239,6 +239,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
     "max_tokens": None,
     "presence_penalty": 0.0,
     "frequency_penalty": 0.0,
+    "repeat_penalty": 1.1,  # For local models (llama-cpp-python): 1.0 = no penalty, >1.0 reduces repetition
     "backend": "openai",
 }
 
@@ -255,6 +256,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "max_tokens": None,  # None tai numero
     "presence_penalty": 0.0,
     "frequency_penalty": 0.0,
+    "repeat_penalty": 1.1,  # For local models (llama-cpp-python): 1.0 = no penalty, >1.0 reduces repetition
     # Backend: "openai" tai "local"
     "backend": "openai",
     # Offline mode: when True, disables all OpenAI API calls
@@ -867,6 +869,7 @@ class JugiAIApp(tk.Tk):
             "max_tokens",
             "presence_penalty",
             "frequency_penalty",
+            "repeat_penalty",
             "backend",
         ]
         for key in keys:
@@ -886,6 +889,7 @@ class JugiAIApp(tk.Tk):
             "max_tokens",
             "presence_penalty",
             "frequency_penalty",
+            "repeat_penalty",
             "backend",
         ]
         for key in keys:
@@ -2167,9 +2171,9 @@ class JugiAIApp(tk.Tk):
             "messages": messages,
             "temperature": float(cfg.get("temperature", 0.7)),
             "top_p": float(cfg.get("top_p", 1.0)),
-            # Add repetition control parameters
-            "frequency_penalty": float(cfg.get("frequency_penalty", 0.0)),
-            "presence_penalty": float(cfg.get("presence_penalty", 0.0)),
+            # Add repetition control parameter for local models
+            # Note: llama-cpp-python uses repeat_penalty, not frequency_penalty/presence_penalty
+            "repeat_penalty": float(cfg.get("repeat_penalty", 1.1)),
         }
         
         # Use local_max_tokens if specified, otherwise use max_tokens
@@ -2206,8 +2210,7 @@ class JugiAIApp(tk.Tk):
                 temperature=float(cfg.get("temperature", 0.7)),
                 top_p=float(cfg.get("top_p", 1.0)),
                 max_tokens=max_tokens_fallback,
-                frequency_penalty=float(cfg.get("frequency_penalty", 0.0)),
-                presence_penalty=float(cfg.get("presence_penalty", 0.0)),
+                repeat_penalty=float(cfg.get("repeat_penalty", 1.1)),
             )
             content = out.get("choices", [{}])[0].get("text", "")
         return content or ""
@@ -2292,6 +2295,7 @@ class JugiAIApp(tk.Tk):
         max_tokens_var = tk.StringVar()
         presence_var = tk.DoubleVar()
         frequency_var = tk.DoubleVar()
+        repeat_var = tk.DoubleVar()
         backend_var = tk.StringVar()
 
         row = 0
@@ -2315,6 +2319,9 @@ class JugiAIApp(tk.Tk):
         row += 1
         ttk.Label(detail, text="frequency_penalty", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Spinbox(detail, from_=-2.0, to=2.0, increment=0.1, textvariable=frequency_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        row += 1
+        ttk.Label(detail, text="repeat_penalty (paikallinen)", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Spinbox(detail, from_=1.0, to=2.0, increment=0.05, textvariable=repeat_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
         ttk.Label(detail, text="Backend", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Combobox(detail, textvariable=backend_var, values=["openai", "local"], state="readonly").grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
@@ -2357,6 +2364,7 @@ class JugiAIApp(tk.Tk):
             max_tokens_var.set(str(int(mt)) if isinstance(mt, int) else "")
             presence_var.set(float(data.get("presence_penalty", 0.0)))
             frequency_var.set(float(data.get("frequency_penalty", 0.0)))
+            repeat_var.set(float(data.get("repeat_penalty", 1.1)))
             backend_var.set(data.get("backend", "openai"))
             prompt_txt.delete("1.0", tk.END)
             prompt_txt.insert("1.0", data.get("system_prompt", self.config_dict.get("system_prompt", "")))
@@ -2381,6 +2389,7 @@ class JugiAIApp(tk.Tk):
                 "max_tokens": int(max_tokens_value) if max_tokens_value.isdigit() else None,
                 "presence_penalty": float(f"{presence_var.get():.3f}"),
                 "frequency_penalty": float(f"{frequency_var.get():.3f}"),
+                "repeat_penalty": float(f"{repeat_var.get():.3f}"),
                 "backend": backend_var.get().strip() or "openai",
             }
             if new_name != key:
@@ -2433,6 +2442,7 @@ class JugiAIApp(tk.Tk):
                 "max_tokens": self.config_dict.get("max_tokens"),
                 "presence_penalty": float(self.config_dict.get("presence_penalty", 0.0)),
                 "frequency_penalty": float(self.config_dict.get("frequency_penalty", 0.0)),
+                "repeat_penalty": float(self.config_dict.get("repeat_penalty", 1.1)),
                 "backend": self.config_dict.get("backend", "openai"),
             }
             self.config_dict["profiles"] = profiles
@@ -2663,6 +2673,33 @@ class JugiAIApp(tk.Tk):
         ttk.Label(
             l,
             text="0 = ei GPU:ta, -1 = kaikki GPU:lle, >0 = määritetty kerrosmäärä GPU:lle",
+            style="Subtle.TLabel"
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
+        row += 1
+        
+        # Repetition penalty for local models
+        ttk.Label(l, text="Toiston esto (repeat_penalty, 1.0–2.0):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
+        repeat_penalty_var = tk.DoubleVar(value=float(self.config_dict.get("repeat_penalty", 1.1)))
+        ttk.Scale(l, from_=1.0, to=2.0, variable=repeat_penalty_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        repeat_penalty_readout = tk.StringVar()
+        ttk.Label(l, textvariable=repeat_penalty_readout, style="Subtle.TLabel").grid(
+            row=row,
+            column=2,
+            sticky=tk.W,
+            padx=(12, 0),
+        )
+        def _update_repeat_penalty_readout(*_args):
+            try:
+                value = float(repeat_penalty_var.get())
+            except Exception:
+                value = 1.1
+            repeat_penalty_readout.set(f"{value:.2f}")
+        repeat_penalty_var.trace_add("write", _update_repeat_penalty_readout)
+        _update_repeat_penalty_readout()
+        row += 1
+        ttk.Label(
+            l,
+            text="1.0 = ei rangaistusta, >1.0 = vähentää toistoa (suositus: 1.1-1.3)",
             style="Subtle.TLabel"
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W)
         row += 1
@@ -2909,6 +2946,15 @@ class JugiAIApp(tk.Tk):
                 self.config_dict["n_gpu_layers"] = n_gpu_layers_value
             except (ValueError, TypeError):
                 self.config_dict["n_gpu_layers"] = 0
+            
+            # Save repeat_penalty for local models
+            try:
+                repeat_penalty_value = float(repeat_penalty_var.get())
+                # Clamp to reasonable range
+                repeat_penalty_value = max(1.0, min(2.0, repeat_penalty_value))
+                self.config_dict["repeat_penalty"] = float(f"{repeat_penalty_value:.3f}")
+            except (ValueError, TypeError):
+                self.config_dict["repeat_penalty"] = 1.1
             
             self.config_dict["background_path"] = bg_var.get().strip()
             self.config_dict["show_background"] = bool(show_bg_var.get())
