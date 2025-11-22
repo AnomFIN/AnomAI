@@ -36,8 +36,8 @@ JugiAI käyttää eri parametreja eri taustamoottoreille:
 
 | Backend | Toiston esto -parametri | Arvoalue | Oletusarvo |
 |---------|-------------------------|----------|------------|
-| **OpenAI** | `frequency_penalty` & `presence_penalty` | -2.0 – 2.0 | 0.0 |
-| **Paikallinen** | `repeat_penalty` | 1.0 – 2.0 | 1.1 |
+| **OpenAI** | `frequency_penalty` & `presence_penalty` | -2.0-2.0 | 0.0 |
+| **Paikallinen** | `repeat_penalty` | 1.0-2.0 | 1.1 |
 
 ### Parametrin toiminta
 
