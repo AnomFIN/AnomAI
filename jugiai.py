@@ -54,6 +54,10 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
 ERROR_LOG_FILE = os.path.join(os.path.dirname(__file__), "jugiai_error.log")
 
+# Repeat penalty constraints for local models (llama-cpp-python)
+REPEAT_PENALTY_MIN = 1.0
+REPEAT_PENALTY_MAX = 2.0
+
 
 def _should_redirect_windows_store(executable: str, env: Dict[str, str], platform: str) -> bool:
     if not executable:
@@ -2321,7 +2325,7 @@ class JugiAIApp(tk.Tk):
         ttk.Spinbox(detail, from_=-2.0, to=2.0, increment=0.1, textvariable=frequency_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
         ttk.Label(detail, text="repeat_penalty (paikallinen)", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
-        ttk.Spinbox(detail, from_=1.0, to=2.0, increment=0.05, textvariable=repeat_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Spinbox(detail, from_=REPEAT_PENALTY_MIN, to=REPEAT_PENALTY_MAX, increment=0.05, textvariable=repeat_var).grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         row += 1
         ttk.Label(detail, text="Backend", style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Combobox(detail, textvariable=backend_var, values=["openai", "local"], state="readonly").grid(row=row, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
@@ -2680,7 +2684,7 @@ class JugiAIApp(tk.Tk):
         # Repetition penalty for local models
         ttk.Label(l, text="Toiston esto (repeat_penalty, 1.0–2.0):").grid(row=row, column=0, sticky=tk.W, pady=(8, 0))
         repeat_penalty_var = tk.DoubleVar(value=float(self.config_dict.get("repeat_penalty", 1.1)))
-        ttk.Scale(l, from_=1.0, to=2.0, variable=repeat_penalty_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
+        ttk.Scale(l, from_=REPEAT_PENALTY_MIN, to=REPEAT_PENALTY_MAX, variable=repeat_penalty_var).grid(row=row, column=1, sticky=tk.EW, padx=(8, 0), pady=(8, 0))
         repeat_penalty_readout = tk.StringVar()
         ttk.Label(l, textvariable=repeat_penalty_readout, style="Subtle.TLabel").grid(
             row=row,
@@ -2691,7 +2695,7 @@ class JugiAIApp(tk.Tk):
         def _update_repeat_penalty_readout(*_args):
             try:
                 value = float(repeat_penalty_var.get())
-            except Exception:
+            except (ValueError, tk.TclError):
                 value = 1.1
             repeat_penalty_readout.set(f"{value:.2f}")
         repeat_penalty_var.trace_add("write", _update_repeat_penalty_readout)
@@ -2951,7 +2955,7 @@ class JugiAIApp(tk.Tk):
             try:
                 repeat_penalty_value = float(repeat_penalty_var.get())
                 # Clamp to reasonable range
-                repeat_penalty_value = max(1.0, min(2.0, repeat_penalty_value))
+                repeat_penalty_value = max(REPEAT_PENALTY_MIN, min(REPEAT_PENALTY_MAX, repeat_penalty_value))
                 self.config_dict["repeat_penalty"] = float(f"{repeat_penalty_value:.3f}")
             except (ValueError, TypeError):
                 self.config_dict["repeat_penalty"] = 1.1
