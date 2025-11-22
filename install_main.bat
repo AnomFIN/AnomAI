@@ -244,7 +244,7 @@ echo.
 set "INSTALL_LLAMA="
 set /p INSTALL_LLAMA=Install local GGUF/llama support (llama-cpp-python)? [Y/N] (default Y): 
 if /I "!INSTALL_LLAMA!"=="" set "INSTALL_LLAMA=Y"
-if /I "%INSTALL_LLAMA%"=="N" (
+if /I "!INSTALL_LLAMA!"=="N" (
   echo Skipping llama-cpp-python installation at user request.
   echo You can always install it later with:
   echo   .\.venv\Scripts\python.exe -m pip install --upgrade --prefer-binary llama-cpp-python
