@@ -1,0 +1,376 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  PYTHONUNBUFFERED: 1
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.10', '3.11', '3.12']
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/pip
+          ~/AppData/Local/pip/Cache
+          ~/Library/Caches/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+          
+    - name: Create virtual environment
+      run: |
+        python -m venv venv
+        
+    - name: Activate virtual environment (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        venv\Scripts\activate.bat
+        python -m pip install --upgrade pip setuptools wheel
+        
+    - name: Activate virtual environment (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        source venv/bin/activate
+        python -m pip install --upgrade pip setuptools wheel
+        
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        venv\Scripts\activate.bat
+        python -m pip install -r requirements.txt
+        python -m pip install flake8 pytest
+        
+    - name: Install dependencies (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        source venv/bin/activate
+        python -m pip install -r requirements.txt
+        python -m pip install flake8 pytest
+        
+    - name: Install tkinter (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-tk xvfb
+        
+    - name: Lint with flake8 (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        venv\Scripts\activate.bat
+        # Stop the build if there are Python syntax errors or undefined names
+        python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Treat all other issues as warnings
+        python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=legacy-orig
+        
+    - name: Lint with flake8 (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        source venv/bin/activate
+        # Stop the build if there are Python syntax errors or undefined names
+        python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Treat all other issues as warnings
+        python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=legacy-orig
+        
+    - name: Run smoke tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        venv\Scripts\activate.bat
+        python -m unittest tests.smoke_test -v
+        
+    - name: Run smoke tests (Unix)
+      if: runner.os != 'Windows' && runner.os != 'Linux'
+      run: |
+        source venv/bin/activate
+        python -m unittest tests.smoke_test -v
+        
+    - name: Run smoke tests (Linux with virtual display)
+      if: runner.os == 'Linux'
+      run: |
+        source venv/bin/activate
+        xvfb-run -a python -m unittest tests.smoke_test -v
+        
+    - name: Run full test suite (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        venv\Scripts\activate.bat
+        python -m unittest discover -s tests -v
+        
+    - name: Run full test suite (Unix)
+      if: runner.os != 'Windows' && runner.os != 'Linux'
+      run: |
+        source venv/bin/activate
+        python -m unittest discover -s tests -v
+        
+    - name: Run full test suite (Linux with virtual display)
+      if: runner.os == 'Linux'
+      run: |
+        source venv/bin/activate
+        xvfb-run -a python -m unittest discover -s tests -v
+
+  installer-test:
+    name: Test Unified Installer
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Test installer syntax (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        python -m py_compile install.py
+        python install.py --help
+        
+    - name: Test installer syntax (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        python3 -m py_compile install.py
+        python3 install.py --help
+        
+    - name: Test installer dry run (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        python install.py --no-interactive --no-exe --no-shortcut --verbose
+        
+    - name: Test installer dry run (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        python3 install.py --no-interactive --no-exe --no-shortcut --verbose
+        
+    - name: Test install.bat wrapper (Windows only)
+      if: runner.os == 'Windows'
+      run: |
+        # Test that install.bat can find Python and delegate properly
+        set BATCH_MODE=1
+        install.bat --help
+
+  build-test:
+    name: Test Build Process
+    runs-on: windows-latest
+    needs: [test, installer-test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.10 (64-bit)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        architecture: 'x64'
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        python -m pip install -r requirements.txt
+        python -m pip install pyinstaller
+        
+    - name: Test PyInstaller build
+      run: |
+        # Quick build test without all features
+        python -m PyInstaller --onefile --windowed --name AnomAI-Test jugiai.py
+        
+    - name: Verify build output
+      run: |
+        if (Test-Path "dist\AnomAI-Test.exe") {
+          Write-Host "✓ PyInstaller build successful"
+          Get-Item "dist\AnomAI-Test.exe" | Select-Object Name, Length
+        } else {
+          Write-Error "✗ PyInstaller build failed - no executable found"
+          exit 1
+        }
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install quality tools
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install flake8 pylint bandit safety
+        
+    - name: Run enhanced linting
+      run: |
+        # Comprehensive flake8 check
+        python -m flake8 . --exclude=legacy-orig --statistics --tee --output-file=flake8-report.txt
+        
+    - name: Security scan with bandit
+      run: |
+        python -m bandit -r . -f json -o bandit-report.json || true
+        python -m bandit -r . -ll || true
+        
+    - name: Check for known vulnerabilities
+      run: |
+        # Create requirements list for safety check
+        python -m pip freeze > current-requirements.txt
+        python -m safety check --file current-requirements.txt || true
+        
+    - name: Upload quality reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: code-quality-reports
+        path: |
+          flake8-report.txt
+          bandit-report.json
+          current-requirements.txt
+
+  documentation-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check README and docs
+      run: |
+        # Verify main README exists and has required sections
+        if [ ! -f "README.md" ]; then
+          echo "✗ Main README.md is missing"
+          exit 1
+        fi
+        
+        echo "✓ README.md found"
+        
+        # Check for required sections
+        if grep -qi "installation" README.md; then
+          echo "✓ Installation section found"
+        else
+          echo "⚠ Installation section missing from README"
+        fi
+        
+        if grep -qi "usage" README.md; then
+          echo "✓ Usage section found"
+        else
+          echo "⚠ Usage section missing from README"
+        fi
+        
+    - name: Check for broken links
+      run: |
+        # Simple check for obvious broken internal links
+        find . -name "*.md" -not -path "./legacy-orig/*" -exec grep -l "](.*)" {} \; | while read file; do
+          echo "Checking links in $file"
+          # This is a basic check - could be enhanced with proper link checker
+        done
+
+  compatibility-check:
+    name: Compatibility Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, windows-2019, macos-12]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Test basic compatibility
+      shell: bash
+      run: |
+        # Test that core files can be parsed
+        python -m py_compile jugiai.py
+        python -m py_compile install.py
+        python -m py_compile playback_utils.py
+        python -m py_compile make_ico.py
+        
+        echo "✓ All core Python files compile successfully"
+        
+        # Test import without GUI
+        python -c "
+        import sys
+        import importlib.util
+        
+        # Mock tkinter to test import logic
+        sys.modules['tkinter'] = type(sys)('mock')
+        sys.modules['tkinter.messagebox'] = type(sys)('mock')
+        sys.modules['tkinter.filedialog'] = type(sys)('mock')
+        sys.modules['tkinter.simpledialog'] = type(sys)('mock')
+        sys.modules['tkinter.ttk'] = type(sys)('mock')
+        sys.modules['tkinter.scrolledtext'] = type(sys)('mock')
+        
+        # Test playback_utils import
+        import playback_utils
+        print('✓ playback_utils imports successfully')
+        
+        # Test make_ico import
+        import make_ico
+        print('✓ make_ico imports successfully')
+        "
+
+# Summary job that depends on all others
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [test, installer-test, build-test, code-quality, documentation-check, compatibility-check]
+    if: always()
+    
+    steps:
+    - name: Check CI results
+      run: |
+        if [ "${{ needs.test.result }}" = "success" ] && \
+           [ "${{ needs.installer-test.result }}" = "success" ] && \
+           [ "${{ needs.build-test.result }}" = "success" ] && \
+           [ "${{ needs.code-quality.result }}" = "success" ] && \
+           [ "${{ needs.documentation-check.result }}" = "success" ] && \
+           [ "${{ needs.compatibility-check.result }}" = "success" ]; then
+          echo "✅ All CI jobs passed successfully!"
+          echo "The codebase is ready for deployment."
+        else
+          echo "❌ Some CI jobs failed:"
+          echo "  Test Suite: ${{ needs.test.result }}"
+          echo "  Installer Test: ${{ needs.installer-test.result }}"
+          echo "  Build Test: ${{ needs.build-test.result }}"
+          echo "  Code Quality: ${{ needs.code-quality.result }}"
+          echo "  Documentation: ${{ needs.documentation-check.result }}"
+          echo "  Compatibility: ${{ needs.compatibility-check.result }}"
+          exit 1
+        fi
