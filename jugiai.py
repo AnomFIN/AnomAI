@@ -253,6 +253,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "local_threads": 0,  # 0 = auto
     "use_gpu": "cpu",  # "cpu", "gpu", or "both"
     "n_gpu_layers": 0,  # Number of layers to offload to GPU (0 = CPU only, -1 = all layers, >0 = specific count)
+    # New local model tuning parameters (added to match tests / PR #44)
+    "local_n_ctx": 4096,
+    "local_n_batch": 256,
+    "local_gpu_layers": -1,
+    "local_max_tokens": None,
+    "local_seed": None,
+    "local_rope_scale": None,
+    "prefer_gpu": True,
     # Taustakuva / ikoni
     "show_background": True,
     "background_path": "",
@@ -1072,16 +1080,16 @@ class JugiAIApp(tk.Tk):
 
         ttk.Separator(composer, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(12, 12))
 
-        self.input = tk.Text(composer, height=3, wrap=tk.WORD, relief=tk.FLAT)
+        self.input = tk.Text(composer, height=2, wrap=tk.WORD, relief=tk.FLAT)
         self.input.grid(row=2, column=0, sticky="ew")
         self.input.configure(
             bg="#071427",
             fg="#e2f7ff",
             insertbackground="#e2f7ff",
-            spacing1=6,
-            spacing2=3,
-            padx=14,
-            pady=14,
+            spacing1=4,
+            spacing2=2,
+            padx=10,
+            pady=8,
             highlightthickness=1,
             highlightcolor="#0ea5e9",
             highlightbackground="#0a223d",
@@ -1214,7 +1222,9 @@ class JugiAIApp(tk.Tk):
 
         if hasattr(self, "input"):
             try:
-                self.input.configure(font=base_font)
+                # Use smaller font for input area (2 sizes smaller than base)
+                input_font = ("Segoe UI", max(sanitized - 2, MIN_FONT_SIZE - 2, 8))
+                self.input.configure(font=input_font)
             except Exception:
                 pass
 
@@ -2057,58 +2067,10 @@ class JugiAIApp(tk.Tk):
         cfg = self.config_dict
         
         # Get or load the model using the model manager
+        # This handles all validation and loading automatically
         llm = _local_model_manager.get_model(cfg, self._safe_log)
-        
-        if not os.path.exists(model_path):
-            raise RuntimeError(
-                f"Paikallista mallia ei löydy: {model_path}\n"
-                "Tarkista polku asetuksista tai lataa malli uudelleen."
-            )
-        
-        # Validate it's a file, not a directory
-        if not os.path.isfile(model_path):
-            raise RuntimeError(
-                f"Virheellinen mallitiedosto: {model_path}\n"
-                "Polku on hakemisto, ei tiedosto."
-            )
-        
-        try:
-            from llama_cpp import Llama
-        except Exception as exc:
-            raise RuntimeError(_format_llama_import_error(exc)) from exc
 
-        if self.llm is None or self.llm_model_path != model_path:
-            self._safe_log(f"Loading local model: {os.path.basename(model_path)}")
-            # Validate and get thread count
-            try:
-                requested_threads = int(cfg.get("local_threads", 0))
-            except (ValueError, TypeError):
-                requested_threads = 0  # Default to auto
-            validated_threads = self._validate_thread_count(requested_threads)
-            
-            # Determine GPU layers based on use_gpu setting
-            use_gpu = cfg.get("use_gpu", "cpu")
-            if use_gpu == "cpu":
-                n_gpu_layers = 0
-            elif use_gpu == "gpu":
-                n_gpu_layers = -1  # All layers to GPU
-            else:  # "both"
-                try:
-                    n_gpu_layers = int(cfg.get("n_gpu_layers", 0))
-                except (ValueError, TypeError):
-                    n_gpu_layers = 0
-            
-            self._safe_log(f"GPU mode: {use_gpu}, n_gpu_layers: {n_gpu_layers}")
-            self.llm = Llama(
-                model_path=model_path,
-                n_threads=validated_threads,
-                n_gpu_layers=n_gpu_layers,
-                verbose=False,
-            )
-            self.llm_model_path = model_path
-            self._safe_log("Local model loaded successfully.")
-
-        messages = self._build_messages_for_backend()
+        messages = self._build_messages_for_backend_with_context_limit()
 
         params = {
             "messages": messages,
